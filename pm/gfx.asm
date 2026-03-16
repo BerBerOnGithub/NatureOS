@@ -1,149 +1,159 @@
 ; ===========================================================================
 ; pm/gfx.asm - Framebuffer graphics primitives
 ;
-; All drawing goes through the VESA linear framebuffer at [vbe_physbase].
-; Coordinates are in pixels, colour is a VGA palette index (0-255).
+; SHADOW FRAMEBUFFER ARCHITECTURE:
+;   All drawing goes to GFX_SHADOW (RAM at 0x500000).
+;   gfx_flush() blits shadow -> MMIO hardware framebuffer.
+;   Screenshots read from GFX_SHADOW - never touch MMIO for reads.
 ;
-; Pitch (bytes per scanline) is read from [vbe_pitch] — do NOT assume
-; pitch == width, some VESA implementations pad to a power of two.
+; gfx_init sets:
+;   gfx_fb_base  = GFX_SHADOW  (all draw calls write here)
+;   gfx_hw_base  = vbe_physbase (MMIO, write-only destination for flush)
+;   gfx_fb_pitch = 640          (hardcoded - shadow is always 640 wide)
 ;
 ; Public interface:
-;   gfx_init          - cache physbase/pitch into fast registers
-;                       call once after pm_entry before any drawing
-;
-;   fb_fill_rect      - fill a solid rectangle
-;     In: EAX=x, EBX=y, ECX=width, EDX=height, ESI=colour (byte)
-;
-;   fb_draw_pixel     - plot a single pixel
-;     In: EAX=x, EBX=y, CL=colour
-;
-;   fb_hline          - horizontal line
-;     In: EAX=x, EBX=y, ECX=width, CL=colour  (CL set BEFORE call)
-;     Note: set CL=colour, ECX=width (CL is low byte of ECX — caller
-;           must set width in ECX then set CL separately, so use EDX
-;           for width and move to ECX inside — see calling convention below)
-;     Revised: EAX=x, EBX=y, EDX=width, CL=colour
-;
-;   fb_vline          - vertical line
-;     In: EAX=x, EBX=y, EDX=height, CL=colour
-;
-;   fb_clear          - fill entire 640x480 screen with one colour
-;     In: AL=colour
-;
-; Internal helper:
-;   gfx_row_ptr       - compute EDI = framebuffer address of pixel (EAX,EBX)
-;     In: EAX=x, EBX=y   Out: EDI=ptr   Trashes: EDI only
-;
-; All routines preserve EAX EBX ECX EDX ESI (except where they are IN params
-; consumed by the routine). EDI is always trashed (it's the write pointer).
+;   gfx_init          - initialise shadow buffer, call once after PM entry
+;   gfx_flush         - blit shadow -> MMIO, call after every complete draw
+;   fb_fill_rect      - EAX=x, EBX=y, ECX=w, EDX=h, ESI=colour
+;   fb_draw_pixel     - EAX=x, EBX=y, CL=colour
+;   fb_hline          - EAX=x, EBX=y, EDX=width, CL=colour
+;   fb_vline          - EAX=x, EBX=y, EDX=height, CL=colour
+;   fb_clear          - AL=colour, fills entire 640x480
+;   gfx_row_ptr       - EAX=x, EBX=y -> EDI=shadow address of pixel
 ; ===========================================================================
 
 [BITS 32]
 
+GFX_SHADOW   equ 0x500000    ; 640*480 = 307200 bytes RAM shadow buffer
+GFX_W        equ 640
+GFX_H        equ 480
+GFX_PIX      equ GFX_W * GFX_H
+
 ; ---------------------------------------------------------------------------
-; gfx_init - cache framebuffer base and pitch into memory fast-vars
-; Call once from pm_entry after vbe_ok is confirmed.
+; gfx_init
 ; ---------------------------------------------------------------------------
 gfx_init:
     push eax
-    ; Copy vbe_physbase and vbe_pitch into our local fast copies
-    ; (vbe_* vars are 16-bit boot-time values; we promote pitch to 32-bit)
+    push ecx
+    push edi
+
+    ; cache MMIO address for flush (write-only)
     mov  eax, [vbe_physbase]
-    mov  [gfx_fb_base], eax
+    mov  [gfx_hw_base], eax
 
-    movzx eax, word [vbe_pitch]
-    mov  [gfx_fb_pitch], eax
+    ; drawing always goes to shadow buffer in RAM
+    mov  dword [gfx_fb_base],  GFX_SHADOW
+    mov  dword [gfx_fb_pitch], GFX_W      ; shadow pitch is always exactly 640
 
+    ; zero shadow buffer
+    mov  edi, GFX_SHADOW
+    mov  ecx, GFX_PIX / 4
+    xor  eax, eax
+    rep  stosd
+
+    ; zero MMIO so display starts black
+    mov  edi, [gfx_hw_base]
+    mov  ecx, GFX_PIX / 4
+    xor  eax, eax
+    rep  stosd
+
+    pop  edi
+    pop  ecx
     pop  eax
     ret
 
 ; ---------------------------------------------------------------------------
-; gfx_row_ptr - compute EDI = address of pixel (EAX=x, EBX=y)
-; Trashes EDI only. Preserves EAX, EBX, ECX, EDX.
+; gfx_flush - blit GFX_SHADOW -> MMIO hardware framebuffer
+; Call at the end of every complete draw operation.
+; ---------------------------------------------------------------------------
+gfx_flush:
+    push eax
+    push ecx
+    push esi
+    push edi
+    mov  esi, GFX_SHADOW
+    mov  edi, [gfx_hw_base]
+    mov  ecx, GFX_PIX / 4
+    rep  movsd
+    pop  edi
+    pop  esi
+    pop  ecx
+    pop  eax
+    ret
+
+; ---------------------------------------------------------------------------
+; gfx_row_ptr - compute EDI = shadow address of pixel (EAX=x, EBX=y)
+; Trashes EDI only.
 ; ---------------------------------------------------------------------------
 gfx_row_ptr:
     push eax
     push edx
-
-    ; EDI = base + y*pitch + x
-    mov  edi, [gfx_fb_base]
-    mov  edx, [gfx_fb_pitch]
-    imul edx, ebx            ; edx = y * pitch
-    add  edi, edx            ; edi = base + y*pitch
-    add  edi, eax            ; edi = base + y*pitch + x
-
+    mov  edi, GFX_SHADOW
+    mov  edx, GFX_W
+    imul edx, ebx
+    add  edi, edx
+    add  edi, eax
     pop  edx
     pop  eax
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_clear - fill entire screen with colour AL
+; fb_clear - fill entire shadow with colour AL then flush
 ; ---------------------------------------------------------------------------
 fb_clear:
     push eax
     push ecx
     push edi
-
-    mov  edi, [gfx_fb_base]
-    mov  ecx, 640 * 480
-    ; AL already has colour — movzx into EAX and use rep stosb
     movzx eax, al
-    ; fill AL into all 4 bytes for potential future rep stosd optimisation
+    mov  edi, GFX_SHADOW
+    mov  ecx, GFX_PIX
     rep  stosb
-
     pop  edi
     pop  ecx
     pop  eax
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_draw_pixel - plot pixel at (EAX=x, EBX=y) with colour CL
+; fb_draw_pixel - EAX=x, EBX=y, CL=colour
 ; ---------------------------------------------------------------------------
 fb_draw_pixel:
     push edi
-    call gfx_row_ptr         ; EDI = pixel address
+    call gfx_row_ptr
     mov  [edi], cl
     pop  edi
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_hline - draw horizontal line
-; In: EAX=x, EBX=y, EDX=width, CL=colour
+; fb_hline - EAX=x, EBX=y, EDX=width, CL=colour
 ; ---------------------------------------------------------------------------
 fb_hline:
     push ecx
     push edi
-
-    call gfx_row_ptr         ; EDI = start of line
-    mov  ecx, edx            ; ECX = width (pixel count)
-    movzx eax, cl            ; AL = colour (rep stosb uses AL)
+    call gfx_row_ptr
+    mov  ecx, edx
+    movzx eax, cl
     rep  stosb
-
     pop  edi
     pop  ecx
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_vline - draw vertical line
-; In: EAX=x, EBX=y, EDX=height, CL=colour
+; fb_vline - EAX=x, EBX=y, EDX=height, CL=colour
 ; ---------------------------------------------------------------------------
 fb_vline:
     push eax
     push ebx
     push edx
     push edi
-
-    mov  edi, 0              ; will be computed per row
-.vline_loop:
+.vl:
     test edx, edx
-    jz   .vline_done
-    call gfx_row_ptr         ; EDI = address of (x, y)
+    jz   .vd
+    call gfx_row_ptr
     mov  [edi], cl
-    inc  ebx                 ; y++
+    inc  ebx
     dec  edx
-    jmp  .vline_loop
-.vline_done:
-
+    jmp  .vl
+.vd:
     pop  edi
     pop  edx
     pop  ebx
@@ -151,8 +161,25 @@ fb_vline:
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_fill_rect - fill rectangle with solid colour
-; In: EAX=x, EBX=y, ECX=width, EDX=height, ESI=colour (byte, low 8 bits)
+; fb_set_pixel - EAX=x, EBX=y, CL=colour  (alias for fb_draw_pixel)
+; ---------------------------------------------------------------------------
+fb_set_pixel:
+    push edi
+    push edx
+    push eax
+    mov  edi, GFX_SHADOW
+    mov  edx, GFX_W
+    imul edx, ebx
+    add  edi, edx
+    add  edi, eax
+    mov  [edi], cl
+    pop  eax
+    pop  edx
+    pop  edi
+    ret
+
+; ---------------------------------------------------------------------------
+; fb_fill_rect - EAX=x, EBX=y, ECX=width, EDX=height, ESI=colour
 ; ---------------------------------------------------------------------------
 fb_fill_rect:
     push eax
@@ -161,36 +188,26 @@ fb_fill_rect:
     push edx
     push esi
     push edi
-
-    ; Save original x and width
-    mov  [gfx_rect_x], eax
-    mov  [gfx_rect_w], ecx
+    mov  [gfx_rect_x],   eax
+    mov  [gfx_rect_w],   ecx
     mov  [gfx_rect_col], esi
-
-.row_loop:
+.fr:
     test edx, edx
-    jz   .rect_done
-
-    ; Restore x for this row
+    jz   .fd
     mov  eax, [gfx_rect_x]
-    call gfx_row_ptr         ; EDI = start of this row
-
-    ; Fill ECX pixels
+    call gfx_row_ptr
     mov  ecx, [gfx_rect_w]
     movzx eax, byte [gfx_rect_col]
-    ; AL = colour, ECX = count
     push ecx
-.fill_row:
+.fi:
     mov  [edi], al
     inc  edi
-    loop .fill_row
+    loop .fi
     pop  ecx
-
-    inc  ebx                 ; y++
+    inc  ebx
     dec  edx
-    jmp  .row_loop
-
-.rect_done:
+    jmp  .fr
+.fd:
     pop  edi
     pop  esi
     pop  edx
@@ -200,13 +217,7 @@ fb_fill_rect:
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_draw_rect_outline - draw an unfilled rectangle border (1px)
-; In: EAX=x, EBX=y, ECX=width, EDX=height, CL=colour
-;
-; Draws 4 lines: top, bottom, left, right
-; Note: CL=colour, but ECX also used for width — we save width first.
-; Calling convention: set colour in CH, width in CL? No — use a different
-; register. Revised: colour passed in ESI low byte, width in ECX, height EDX
+; fb_draw_rect_outline - EAX=x, EBX=y, ECX=width, EDX=height, ESI=colour
 ; ---------------------------------------------------------------------------
 fb_draw_rect_outline:
     push eax
@@ -214,43 +225,32 @@ fb_draw_rect_outline:
     push ecx
     push edx
     push esi
-
-    mov  [gfx_rect_x],   eax
-    mov  [gfx_rect_y],   ebx
-    mov  [gfx_rect_w],   ecx
-    mov  [gfx_rect_h],   edx
+    mov  [gfx_rect_x], eax
+    mov  [gfx_rect_y], ebx
+    mov  [gfx_rect_w], ecx
+    mov  [gfx_rect_h], edx
     mov  [gfx_rect_col], esi
-
     mov  cl, byte [gfx_rect_col]
-
-    ; Top line: (x, y, width)
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     mov  edx, [gfx_rect_w]
     call fb_hline
-
-    ; Bottom line: (x, y+height-1, width)
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     add  ebx, [gfx_rect_h]
     dec  ebx
     mov  edx, [gfx_rect_w]
     call fb_hline
-
-    ; Left line: (x, y, height)
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     mov  edx, [gfx_rect_h]
     call fb_vline
-
-    ; Right line: (x+width-1, y, height)
     mov  eax, [gfx_rect_x]
     add  eax, [gfx_rect_w]
     dec  eax
     mov  ebx, [gfx_rect_y]
     mov  edx, [gfx_rect_h]
     call fb_vline
-
     pop  esi
     pop  edx
     pop  ecx
@@ -259,9 +259,7 @@ fb_draw_rect_outline:
     ret
 
 ; ---------------------------------------------------------------------------
-; fb_xor_rect_outline - XOR a rectangle border onto framebuffer
-; Calling it twice on the same coords restores original pixels exactly.
-; In: EAX=x, EBX=y, ECX=width, EDX=height
+; fb_xor_rect_outline - EAX=x, EBX=y, ECX=width, EDX=height
 ; ---------------------------------------------------------------------------
 fb_xor_rect_outline:
     push eax
@@ -269,56 +267,42 @@ fb_xor_rect_outline:
     push ecx
     push edx
     push edi
-
     mov  [gfx_rect_x], eax
     mov  [gfx_rect_y], ebx
     mov  [gfx_rect_w], ecx
     mov  [gfx_rect_h], edx
-
-    ; top row
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     call gfx_row_ptr
     mov  ecx, [gfx_rect_w]
-.top:
-    xor  byte [edi], 0xFF
+.xt: xor  byte [edi], 0xFF
     inc  edi
-    loop .top
-
-    ; bottom row
+    loop .xt
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     add  ebx, [gfx_rect_h]
     dec  ebx
     call gfx_row_ptr
     mov  ecx, [gfx_rect_w]
-.bot:
-    xor  byte [edi], 0xFF
+.xb: xor  byte [edi], 0xFF
     inc  edi
-    loop .bot
-
-    ; left col
+    loop .xb
     mov  eax, [gfx_rect_x]
     mov  ebx, [gfx_rect_y]
     mov  ecx, [gfx_rect_h]
-.left:
-    call gfx_row_ptr
+.xl: call gfx_row_ptr
     xor  byte [edi], 0xFF
     inc  ebx
-    loop .left
-
-    ; right col
+    loop .xl
     mov  eax, [gfx_rect_x]
     add  eax, [gfx_rect_w]
     dec  eax
     mov  ebx, [gfx_rect_y]
     mov  ecx, [gfx_rect_h]
-.right:
-    call gfx_row_ptr
+.xr: call gfx_row_ptr
     xor  byte [edi], 0xFF
     inc  ebx
-    loop .right
-
+    loop .xr
     pop  edi
     pop  edx
     pop  ecx
@@ -327,10 +311,11 @@ fb_xor_rect_outline:
     ret
 
 ; ---------------------------------------------------------------------------
-; Scratch variables (used internally by rect routines)
+; Data
 ; ---------------------------------------------------------------------------
-gfx_fb_base:   dd 0
-gfx_fb_pitch:  dd 0
+gfx_fb_base:   dd GFX_SHADOW
+gfx_hw_base:   dd 0
+gfx_fb_pitch:  dd GFX_W
 gfx_rect_x:    dd 0
 gfx_rect_y:    dd 0
 gfx_rect_w:    dd 0

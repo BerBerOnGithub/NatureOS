@@ -62,3 +62,27 @@ pm_newline:
 ; ---------------------------------------------------------------------------
 pm_update_cursor:
     ret                  ; no-op, terminal has no hardware cursor
+
+; serial_print — print ESI string to COM1 (shows in QEMU -serial stdio)
+serial_print:
+    push eax
+    push edx
+.loop:
+    mov  al, [esi]
+    test al, al
+    jz   .done
+    ; wait for transmit buffer empty (bit 5 of Line Status Register)
+.wait:
+    mov  dx, 0x3FD
+    in   al, dx
+    test al, 0x20
+    jz   .wait
+    mov  dx, 0x3F8
+    mov  al, [esi]
+    out  dx, al
+    inc  esi
+    jmp  .loop
+.done:
+    pop  edx
+    pop  eax
+    ret

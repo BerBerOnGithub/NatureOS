@@ -47,6 +47,10 @@ echo [4/6] Packing filesystem...
 python mkfs.py
 if errorlevel 1 ( echo FAILED: mkfs.py & exit /b 1 )
 
+echo [4b] Creating data disk image...
+python mkdata.py
+if errorlevel 1 ( echo FAILED: mkdata.py & exit /b 1 )
+
 echo [5/6] Building flat binary image...
 REM Layout aligned to 2048-byte CD sectors (4 x 512-byte sectors):
 REM   512-sector 0:   boot.bin
@@ -94,9 +98,10 @@ exit /b 0
 :run
 qemu-system-x86_64 ^
   -cdrom claudeos.iso ^
+  -drive format=raw,file=data.img,if=ide,index=3 ^
   -boot d ^
   -m 64M ^
-  -cpu Haswell ^
+  -cpu qemu64 ^
   -smp 1 ^
   -vga std ^
   -rtc base=localtime ^

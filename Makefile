@@ -21,9 +21,14 @@ FS_START_SECTOR     := 204
 FS_SECTORS          := 1600
 FLAT_SECTORS        := $(shell echo $$(($(FS_START_SECTOR) + $(FS_SECTORS))))
 
+DATA_IMG   := data.img
+
 .PHONY: all run clean
 
-all: $(ISO)
+all: $(ISO) $(DATA_IMG)
+
+$(DATA_IMG):
+	python3 mkdata.py
 
 $(BOOT_BIN): boot.asm | build
 	$(ASM) $(ASMFLAGS) -o $@ $<
@@ -67,12 +72,14 @@ $(ISO): $(FLAT_IMG)
 build:
 	mkdir -p build
 
-run: $(ISO)
+run: $(ISO) $(DATA_IMG)
 	qemu-system-x86_64 \
 	    -cdrom $(ISO) \
+	    -drive format=raw,file=$(DATA_IMG),if=ide,index=2 \
+	    -boot d \
 	    -m 32M -display sdl -no-reboot \
-	    -nic user,model=e1000 \
-	    -boot d
+	    -cpu qemu64 \
+	    -nic user,model=e1000
 
 clean:
 	rm -rf build $(ISO)

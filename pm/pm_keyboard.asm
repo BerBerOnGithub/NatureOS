@@ -13,34 +13,60 @@
 [BITS 32]
 
 ; ---------------------------------------------------------------------------
-; pm_getkey - wait for key press, return ASCII in AL (0 = unhandled)
-; Handles shift for uppercase. Ignores key releases.
+; pm_getkey - NON-BLOCKING key check. Returns AL=0 if no key ready.
+; Only reads keyboard (not mouse) data. Returns 0xFF for PrtSc.
 ; ---------------------------------------------------------------------------
 pm_getkey:
     push ebx
-.wait:
+    ; Check if keyboard data is available (bit 0 set, bit 5 clear = keyboard)
     in   al, 0x64
-    test al, 1               ; output buffer full?
-    jz   .wait
+    test al, 0x01
+    jz   .no_key             ; nothing in buffer
+    test al, 0x20
+    jnz  .no_key             ; it's mouse data, not keyboard
     in   al, 0x60            ; read scan code
 
-    ; track shift state (scan 0x2A = left shift, 0x36 = right shift)
+    ; E0 extended prefix
+    cmp  al, 0xE0
+    jne  .not_e0
+    mov  byte [pm_e0], 1
+    xor  al, al              ; return 0, caller will poll again next tick
+    pop  ebx
+    ret
+
+.not_e0:
+    cmp  byte [pm_e0], 1
+    jne  .normal
+    mov  byte [pm_e0], 0
+
+    cmp  al, 0x2A            ; fake shift from PrtSc press — ignore
+    je   .no_key
+    cmp  al, 0xAA            ; fake shift release — ignore
+    je   .no_key
+    cmp  al, 0xB7            ; PrtSc release — ignore
+    je   .no_key
+    cmp  al, 0x37            ; PrtSc press — signal
+    jne  .no_key
+    mov  al, 0xFF
+    pop  ebx
+    ret
+
+.normal:
     cmp  al, 0x2A
     je   .shift_on
     cmp  al, 0x36
     je   .shift_on
-    cmp  al, 0xAA            ; left shift release
+    cmp  al, 0xAA
     je   .shift_off
-    cmp  al, 0xB6            ; right shift release
+    cmp  al, 0xB6
     je   .shift_off
 
-    test al, 0x80            ; any other release? ignore
-    jnz  .ignore
+    test al, 0x80            ; key release — ignore
+    jnz  .no_key
 
-    ; look up in appropriate table
     movzx ebx, al
     cmp  ebx, 58
-    jae  .ignore
+    jae  .no_key
 
     cmp  byte [pm_shift], 0
     jne  .shifted
@@ -55,12 +81,25 @@ pm_getkey:
 
 .shift_on:
     mov  byte [pm_shift], 1
-    jmp  .wait
+.no_key:
+    xor  al, al
+    pop  ebx
+    ret
 .shift_off:
     mov  byte [pm_shift], 0
-    jmp  .wait
-.ignore:
     xor  al, al
+    pop  ebx
+    ret
+
+; ---------------------------------------------------------------------------
+; pm_getkey_block - BLOCKING version (used by text-mode shell only)
+; ---------------------------------------------------------------------------
+pm_getkey_block:
+    push ebx
+.wait:
+    call pm_getkey
+    test al, al
+    jz   .wait
     pop  ebx
     ret
 
@@ -76,7 +115,7 @@ pm_readline:
     mov  dword [pm_input_len], 0
 
 .loop:
-    call pm_getkey
+    call pm_getkey_block
     or   al, al
     jz   .loop
 

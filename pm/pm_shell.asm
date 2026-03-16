@@ -14,9 +14,13 @@ pm_entry:
     mov  fs, ax
     mov  gs, ax
     mov  ss, ax
-    mov  esp, 0x7BF0
+    mov  esp, 0x9e000
+    call irq_init           ; remap PIC, install IDT, enable IRQ0 at 100Hz
     call pm_drv_init
+    call bios_disk_init     ; detect data drive via BIOS INT 13h
+    call fsd_init           ; read ClaudeFS data directory into RAM
     call gfx_init
+
 
     ; If VBE failed, skip the graphical WM entirely and use text-mode shell
     cmp  byte [vbe_ok], 1
@@ -24,6 +28,25 @@ pm_entry:
 
     ; initialise window manager (draws desktop + taskbar)
     call wm_init
+
+    ; load wallpaper first — populates WP_REMAP used by icons + cursor
+    call wallpaper_load
+
+    ; DEBUG: print first byte of GFX_SHADOW to serial
+    push eax
+    push edx
+    movzx eax, byte [0x500000]
+    add   al, '0'
+    mov   dx, 0x3FD
+.wsh: in al, dx
+    test  al, 0x20
+    jz    .wsh
+    mov   dx, 0x3F8
+    movzx eax, byte [0x500000]
+    add   al, '!'
+    out   dx, al
+    pop   edx
+    pop   eax
 
     ; try to load bitmap cursor from ClaudeFS
     call cursor_load_bmp
@@ -89,10 +112,10 @@ pm_entry:
 
     ; refresh live window content (clock ticks, etc.)
     call wm_update_contents
-
-    ; process one keystroke (non-blocking)
     call term_tick
-
+    cmp  byte [scr_pending], 1
+    jne  .no_scr
+.no_scr:
     jmp  .loop
 
 ; ---------------------------------------------------------------------------
@@ -115,6 +138,28 @@ pm_shell_loop:
 
 ; pm_gfx_test removed - window manager (wm.asm) now handles all drawing
 ; ---------------------------------------------------------------------------
+; pm_run_command — copy ESI string into pm_input_buf and execute it
+; Used by the start menu to launch commands programmatically.
+pm_run_command:
+    push esi
+    push edi
+    push ecx
+    mov  edi, pm_input_buf
+    xor  ecx, ecx
+.copy:
+    mov  al, [esi + ecx]
+    mov  [edi + ecx], al
+    inc  ecx
+    test al, al
+    jnz  .copy
+    dec  ecx
+    mov  [pm_input_len], ecx
+    pop  ecx
+    pop  edi
+    pop  esi
+    call pm_exec
+    ret
+
 ; pm_exec - dispatch command in pm_input_buf
 ; ---------------------------------------------------------------------------
 pm_exec:
@@ -203,14 +248,39 @@ pm_exec:
     je   .netdbg
 
     mov  esi, pm_input_buf
-    mov  edi, pm_str_cmd_clock
+    mov  edi, pm_str_cmd_term
     call pm_strcmp
-    je   .clock
+    je   .term
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_helpwin
+    call pm_strcmp
+    je   .helpwin
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_diskinfo
+    call pm_strcmp
+    je   .diskinfo
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_sw
+    call pm_strcmp
+    je   .stopwatch
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_pfx_timer
+    call pm_startswith
+    je   .timer
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_files
     call pm_strcmp
     je   .files
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_savescr
+    call pm_strcmp
+    je   .savescr
 
     ; unknown
     mov  esi, pm_str_unknown
@@ -246,9 +316,19 @@ pm_exec:
     jmp  .done
 .netdbg:    call cmd_netdbg
     jmp  .done
-.clock:     call pm_cmd_clock
+.stopwatch: call pm_cmd_stopwatch
+    jmp  .done
+.term:      call pm_cmd_term
+    jmp  .done
+.helpwin:   call pm_cmd_helpwin
+    jmp  .done
+.diskinfo:  call pm_cmd_diskinfo
+    jmp  .done
+.timer:     call pm_cmd_timer
     jmp  .done
 .files:     call pm_cmd_files
+    jmp  .done
+.savescr:   call pm_cmd_savescr
     jmp  .done
 .exit:  call pm_cmd_exit       ; does not return to here
 
@@ -259,27 +339,346 @@ pm_exec:
     ret
 
 ; ---------------------------------------------------------------------------
-; pm_cmd_clock  — open a Clock window
 ; ---------------------------------------------------------------------------
-pm_cmd_clock:
+; pm_cmd_stopwatch — open stopwatch window, or start/stop/reset if open
+; Usage: stopwatch          -> open window in stopwatch mode
+;        stopwatch          -> if window open: toggle start/stop
+;        stopwatch reset    -> reset to 00:00.00
+; ---------------------------------------------------------------------------
+
+; ---------------------------------------------------------------------------
+; pm_cmd_term — open a new Terminal window
+; ---------------------------------------------------------------------------
+pm_cmd_term:
     pusha
-    mov  al,  WM_CLOCK
-    mov  ebx, 200
-    mov  ecx, 150
-    mov  edx, 180
-    mov  esi, 80
-    call wm_open            ; returns new index in ECX
+    mov  al,  WM_TERM
+    mov  ebx, 110
+    mov  ecx, 50
+    mov  edx, 520
+    mov  esi, 340
+    call wm_open
     jc   .full
-    push ecx                ; save window index
+    push ecx
     call wm_draw_all
-    pop  ecx                ; restore for wm_draw_clock
-    call wm_draw_clock
+    call term_init
+    pop  ecx
     jmp  .done
 .full:
     mov  esi, pm_str_wm_full
     call term_puts
     call term_newline
 .done:
+    popa
+    ret
+
+; ---------------------------------------------------------------------------
+; pm_cmd_diskinfo — probe all 4 ATA positions and print raw status bytes
+; ---------------------------------------------------------------------------
+pm_cmd_diskinfo:
+    pusha
+
+    ; show VBE pitch for debugging
+    mov  esi, di_str_pitch
+    mov  bl, 0x0E
+    call term_puts
+    mov  eax, [gfx_fb_pitch]
+    call term_print_hex_word
+    call term_newline
+
+    ; show bd_ready and bd_drive
+    mov  esi, di_str_ready
+    mov  bl, 0x0B
+    call term_puts
+    movzx eax, byte [bd_ready]
+    call term_print_hex_byte
+    call term_newline
+
+    mov  esi, di_str_drive
+    mov  bl, 0x07
+    call term_puts
+    movzx eax, byte [bd_drive]
+    call term_print_hex_byte
+    call term_newline
+
+    ; show fsd_ready
+    mov  esi, di_str_fsd
+    mov  bl, 0x07
+    call term_puts
+    movzx eax, byte [fsd_ready]
+    call term_print_hex_byte
+    call term_newline
+
+    ; ALWAYS dump first 8 bytes of 0x40000 (what stage2 loaded)
+    mov  esi, di_str_ram40
+    mov  bl, 0x0E
+    call term_puts
+    mov  ecx, 8
+    mov  esi, 0x80000
+.ram40loop:
+    movzx eax, byte [esi]
+    call term_print_hex_byte
+    push esi
+    mov  esi, di_str_space
+    mov  bl, 0x07
+    call term_puts
+    pop  esi
+    inc  esi
+    loop .ram40loop
+    call term_newline
+
+    ; also show byte at 0x40000+20 (drive number stored by stage2)
+    mov  esi, di_str_drv20
+    mov  bl, 0x07
+    call term_puts
+    movzx eax, byte [0x80014]
+    call term_print_hex_byte
+    call term_newline
+
+    ; check magic directly at 0x40000
+    cmp  dword [0x80000], 0x44464C43
+    jne  .bad_magic
+    mov  esi, di_str_magic_ok
+    mov  bl, 0x0A
+    call term_puts
+    call term_newline
+    jmp  .done
+.bad_magic:
+    mov  esi, di_str_magic_bad
+    mov  bl, 0x0C
+    call term_puts
+    call term_newline
+.done:
+    popa
+    ret
+
+; ── term_print_hex_byte / word helpers ──────────────────────────────────────
+term_print_hex_byte:
+    push eax
+    push ebx
+    push esi
+    mov  esi, di_hexbuf
+    mov  bl, al
+    shr  al, 4
+    call .nibble
+    mov  al, bl
+    and  al, 0x0F
+    call .nibble
+    mov  byte [esi], 0
+    mov  esi, di_hexbuf
+    mov  bl, 0x0E
+    call term_puts
+    pop  esi
+    pop  ebx
+    pop  eax
+    ret
+.nibble:
+    cmp  al, 9
+    jle  .dec
+    add  al, 'A' - 10
+    jmp  .store
+.dec:
+    add  al, '0'
+.store:
+    mov  [esi], al
+    inc  esi
+    ret
+
+term_print_hex_word:
+    push eax
+    push eax
+    shr  eax, 8
+    call term_print_hex_byte
+    pop  eax
+    call term_print_hex_byte
+    pop  eax
+    ret
+
+di_base:    dw 0
+di_drv:     db 0
+di_status:  db 0
+di_lbamid:  db 0
+di_lbahi:   db 0
+di_hexbuf:  times 8 db 0
+di_str_pitch:    db 'vbe_pitch=', 0
+di_str_ready:    db 'bd_ready=', 0
+di_str_drive:    db 'bd_drive=', 0
+di_str_fsd:      db 'fsd_ready=', 0
+di_str_ram40:    db '0x80000: ', 0
+di_str_drv20:    db 'drv@+14h=', 0
+di_str_sec0:     db 'sec0: ', 0
+di_str_space:    db ' ', 0
+di_str_magic_ok:  db 'Magic: CLFD OK!', 0
+di_str_magic_bad: db 'Magic: BAD', 0
+di_str_no_drive:  db 'No drive detected', 0
+di_sec0buf:      times 512 db 0
+
+; ---------------------------------------------------------------------------
+; pm_cmd_helpwin — open About/Help window
+; ---------------------------------------------------------------------------
+pm_cmd_helpwin:
+    pusha
+    mov  al,  WM_HELP
+    mov  ebx, 150
+    mov  ecx, 100
+    mov  edx, 300
+    mov  esi, 210
+    call wm_open
+    jc   .full
+    push ecx
+    call wm_draw_all
+    pop  ecx
+    call wm_draw_help
+    jmp  .done
+.full:
+    mov  esi, pm_str_wm_full
+    call term_puts
+    call term_newline
+.done:
+    popa
+    ret
+
+pm_cmd_stopwatch:
+    pusha
+    ; check if a stopwatch window is already open
+    mov  dword [wm_i], 0
+.sw_find:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .sw_open_new
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .sw_next
+    cmp  byte [edi+16], WM_CLOCK
+    je   .sw_found
+.sw_next:
+    inc  dword [wm_i]
+    jmp  .sw_find
+
+.sw_found:
+    ; check for 'reset' argument
+    mov  esi, pm_input_buf + 10  ; after "stopwatch "
+    cmp  byte [esi-1], ' '
+    jne  .sw_toggle
+    mov  edi, pm_str_sw_reset
+    call pm_strcmp
+    jne  .sw_toggle
+    ; reset
+    mov  dword [sw_ticks], 0
+    mov  byte  [sw_running], 0
+    mov  ecx, [wm_i]
+    call wm_draw_clock
+    jmp  .sw_done
+
+.sw_toggle:
+    ; toggle running state
+    xor  byte [sw_running], 1
+    mov  ecx, [wm_i]
+    call wm_draw_clock
+    jmp  .sw_done
+
+.sw_open_new:
+    mov  byte [sw_mode], SW_MODE_SW
+    mov  dword [sw_ticks], 0
+    mov  dword [sw_cs_count], 0
+    mov  dword [sw_start_offset], 0
+    mov  byte  [sw_running], 0
+    mov  al,  WM_CLOCK
+    mov  ebx, 190
+    mov  ecx, 150
+    mov  edx, 220
+    mov  esi, 100
+    call wm_open
+    jc   .sw_full
+    push ecx
+    call wm_draw_all
+    pop  ecx
+    call wm_draw_clock
+    jmp  .sw_done
+.sw_full:
+    mov  esi, pm_str_wm_full
+    call term_puts
+    call term_newline
+.sw_done:
+    popa
+    ret
+
+; ---------------------------------------------------------------------------
+; pm_cmd_timer — open countdown timer window
+; Usage: timer MM:SS        -> open timer window counting down from MM:SS
+; ---------------------------------------------------------------------------
+pm_cmd_timer:
+    pusha
+
+    ; parse "timer MM:SS" — skip "timer " prefix (6 chars)
+    mov  esi, pm_input_buf
+    add  esi, 6
+
+    ; parse MM
+    xor  eax, eax
+    xor  ecx, ecx
+.mm_loop:
+    movzx ebx, byte [esi]
+    cmp  bl, ':'
+    je   .mm_done
+    cmp  bl, 0
+    je   .parse_err
+    sub  bl, '0'
+    imul eax, 10
+    add  eax, ebx
+    inc  esi
+    jmp  .mm_loop
+.mm_done:
+    mov  [wm_clk_mm], eax
+    inc  esi                    ; skip ':'
+
+    ; parse SS
+    xor  eax, eax
+.ss_loop:
+    movzx ebx, byte [esi]
+    cmp  bl, 0
+    je   .ss_done
+    sub  bl, '0'
+    imul eax, 10
+    add  eax, ebx
+    inc  esi
+    jmp  .ss_loop
+.ss_done:
+    mov  [wm_clk_ss], eax
+
+    ; convert MM:SS to ticks (100Hz)
+    mov  eax, [wm_clk_mm]
+    imul eax, 60
+    add  eax, [wm_clk_ss]
+    imul eax, 100
+    mov  [sw_ticks_end], eax
+    mov  dword [sw_ticks], 0
+    mov  byte  [sw_mode],    SW_MODE_TIMER
+    mov  byte  [sw_running], 1
+
+    ; open or reuse window
+    mov  al,  WM_CLOCK
+    mov  ebx, 190
+    mov  ecx, 150
+    mov  edx, 220
+    mov  esi, 100
+    call wm_open
+    jc   .timer_full
+    push ecx
+    call wm_draw_all
+    pop  ecx
+    call wm_draw_clock
+    jmp  .timer_done
+.timer_full:
+    mov  esi, pm_str_wm_full
+    call term_puts
+    call term_newline
+    jmp  .timer_done
+.parse_err:
+    mov  esi, pm_str_timer_usage
+    call term_puts
+    call term_newline
+.timer_done:
     popa
     ret
 
@@ -322,3 +721,4 @@ pm_cmd_files:
 %include "pm/fs_pm.asm"
 %include "pm/wm.asm"
 %include "pm/icons.asm"
+%include "pm/wallpaper.asm"

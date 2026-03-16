@@ -125,3 +125,7 @@ syscall_entry:
 %include "pm/pm_shell.asm"
 %include "pm/gfx.asm"
 %include "pm/font.asm"
+%include "pm/irq.asm"
+%include "pm/bios_disk.asm"
+%include "pm/fs_data.asm"
+%include "pm/wm_screenshot.asm"

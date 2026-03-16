@@ -4,9 +4,9 @@
 [BITS 32]
 
 %define ICON_STRIDE   24
-%define ICON_COUNT    3
+%define ICON_COUNT    2
 %define ICON_SZ       32
-%define ICON_TRANSP   1
+%define ICON_TRANSP   1     ; BMP index 1 = dark blue = transparent background
 
 ; ---------------------------------------------------------------------------
 ; icons_init
@@ -235,9 +235,7 @@ icons_click:
     movzx eax, byte [edi+12]
     cmp  eax, 0
     jne  .chk_clock
-    xor  ecx, ecx
-    call wm_set_focus
-    call wm_draw_all
+    call pm_cmd_term
     jmp  .hit
 .chk_clock:
     cmp  eax, 1
@@ -318,14 +316,10 @@ icon_fn_clock:  db 'icon_clock', 0
 icon_fn_files:  db 'icon_files', 0
 
 icon_table:
-    dd 39,  50,  icon_pixels_term
+    dd 39,  20,  icon_pixels_term
     db 0, 0, 0, 0
     dd icon_lbl_term,  icon_fn_term
 
-    dd 39, 150, icon_pixels_clock
-    db 1, 0, 0, 0
-    dd icon_lbl_clock, icon_fn_clock
-
-    dd 39, 260, icon_pixels_files
+    dd 39,  78, icon_pixels_files
     db 2, 0, 0, 0
     dd icon_lbl_files, icon_fn_files

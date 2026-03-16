@@ -15,12 +15,15 @@ pm_cursor_y:    dd 0
 pm_input_len:   dd 0
 pm_input_buf:   times 128 db 0
 pm_shift:       db 0         ; 1 if shift currently held
+pm_e0:          db 0         ; 1 if last scancode was E0 prefix
 
 pm_calc_n1:     dd 0
 pm_calc_n2:     dd 0
 pm_calc_op:     db 0
 pm_probe_rows:  dd 0
 pm_probe_cols:  dd 0
+gfx_dirty:  db 0
+scr_pending:  db 0
 
 ; ---------------------------------------------------------------------------
 ; PS/2 scan code → ASCII tables
@@ -76,8 +79,16 @@ pm_str_cmd_arp:      db 'arp', 0
 pm_str_pfx_arping:   db 'arping ', 0
 pm_str_pfx_ping:     db 'ping ', 0
 pm_str_cmd_netdbg:   db 'netdbg', 0
-pm_str_cmd_clock:    db 'clock', 0
+pm_str_cmd_term:     db 'term', 0
+pm_str_cmd_helpwin:  db 'helpwin', 0
+pm_str_cmd_diskinfo: db 'diskinfo', 0
+pm_str_cmd_atadbg:   db 'atadbg', 0
+pm_str_cmd_sw:       db 'stopwatch', 0
+pm_str_pfx_timer:    db 'timer ', 0
 pm_str_cmd_files:    db 'files', 0
+pm_str_sw_reset:     db 'reset', 0
+pm_str_timer_usage:  db 'Usage: timer MM:SS', 0
+pm_str_cmd_savescr:  db 'savescr', 0
 
 ; Window manager strings
 pm_str_wm_full:      db 'Max windows open (close one first).', 0
@@ -113,9 +124,12 @@ pm_str_help_text:
     db ' | arp                  | show ARP cache             |', 13, 10
     db ' | arping <ip>          | send ARP request           |', 13, 10
     db ' | ping <ip>            | send ICMP echo (4 packets) |', 13, 10
-    db ' | clock                | open clock window          |', 13, 10
+    db ' | stopwatch            | stopwatch (run again=start/|', 13, 10
+    db ' |                      | stop, "stopwatch reset")   |', 13, 10
+    db ' | timer MM:SS          | countdown timer            |', 13, 10
     db ' | files                | open file browser window   |', 13, 10
     db ' | exit                 | return to real mode        |', 13, 10
+    db ' | savescr              | save pending screenshot    |', 13, 10
     db ' +----------------------+----------------------------+', 13, 10, 10, 0
 
 pm_str_ver_text:

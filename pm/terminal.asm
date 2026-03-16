@@ -34,6 +34,20 @@ term_init:
     mov  esi, term_str_banner
     call term_puts
     call term_newline
+
+    ; show data disk status
+    cmp  byte [bd_ready], 1
+    jne  .no_disk
+    mov  esi, term_str_disk_ok
+    call term_puts
+    call term_newline
+    jmp  .disk_done
+.no_disk:
+    mov  esi, term_str_disk_no
+    call term_puts
+    call term_newline
+.disk_done:
+
     call term_draw_prompt
     popa
     ret
@@ -183,14 +197,20 @@ term_redraw:
 ; term_tick — non-blocking key handler
 ; ---------------------------------------------------------------------------
 term_tick:
+    ; non-blocking: check keyboard buffer has data AND it's not mouse data
     in   al, 0x64
-    test al, 0x01
+    test al, 0x01           ; any data at all?
     jz   .done
-    test al, 0x20
+    test al, 0x20           ; aux (mouse) data? skip entirely this tick
     jnz  .done
     call pm_getkey
     or   al, al
     jz   .done
+    cmp  al, 0xFF            ; Print Screen sentinel
+    jne  .not_prtsc
+    call wm_screenshot_capture
+    jmp  .done
+.not_prtsc:
     cmp  al, 13
     je   .enter
     cmp  al, 8
@@ -459,4 +479,6 @@ term_scroll_lim:  dd 0
 term_buf: times (TERM_BUF_ROWS * TERM_BUF_COLS * 2) db 0
 
 term_str_banner:  db 'ClaudeOS v2.0 - type help for commands', 0
+term_str_disk_ok: db 'Data disk: OK', 0
+term_str_disk_no: db 'Data disk: not found (no -drive attached?)', 0
 term_str_prompt:  db '> ', 0

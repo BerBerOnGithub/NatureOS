@@ -100,6 +100,59 @@ stage2_start:
     call load_blocks
     jc   .err
 
+    ; -----------------------------------------------------------------------
+    ; Step 5: Probe data disk for CLFD magic — try drives 0x80..0x83
+    ;         Skip the boot drive. Load 5 sectors → 0x4000:0 = 0x40000
+    ; -----------------------------------------------------------------------
+    mov  byte [data_drv], 0x80
+.probe_drive:
+    cmp  byte [data_drv], 0x84
+    jge  .no_data_disk
+
+    ; skip boot drive
+    mov  al, [data_drv]
+    cmp  al, [boot_drive]
+    je   .next_drive
+
+    ; try reading 5 sectors from this drive into 0x40000
+    mov  byte  [dap.size],    0x10
+    mov  byte  [dap.res],     0
+    mov  word  [dap.count],   5
+    mov  word  [dap.buf_off], 0x0000
+    mov  word  [dap.buf_seg], 0x8000
+    mov  dword [dap.lba_lo],  0
+    mov  dword [dap.lba_hi],  0
+    mov  ah, 0x42
+    mov  dl, [data_drv]
+    mov  si, dap
+    int  0x13
+    jc   .next_drive
+
+    ; check magic
+    mov  ax, 0x8000
+    mov  es, ax
+    cmp  dword [es:0], 0x44464C43
+    jne  .next_drive
+
+    ; found! store drive number at offset 20
+    mov  al, [data_drv]
+    mov  byte [es:20], al
+    mov  si, msg_data_ok
+    call puts
+    jmp  .data_done
+
+.next_drive:
+    inc  byte [data_drv]
+    jmp  .probe_drive
+
+.no_data_disk:
+    ; zero the magic so kernel knows no disk
+    mov  ax, 0x8000
+    mov  es, ax
+    mov  word [es:0], 0
+
+.data_done:
+
     mov  si, msg_ok
     call puts
     mov  dl, [boot_drive]
@@ -171,6 +224,7 @@ puts:
 
 ; ---------------------------------------------------------------------------
 boot_drive:       db 0
+data_drv:         db 0
 boot_catalog_lba: dd 0
 base_lba:         dd 0
 lba:              dd 0
@@ -192,3 +246,4 @@ msg_kernel: db 'Loading kernel...', 13, 10, 0
 msg_fs:     db 'Loading FS...', 13, 10, 0
 msg_ok:     db 'OK', 13, 10, 0
 msg_error:  db 'ERROR: load failed', 13, 10, 0
+msg_data_ok: db 'Data disk found', 13, 10, 0

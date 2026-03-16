@@ -340,7 +340,7 @@ cursor_load_bmp:
     add  edi, ecx           ; edi = destination row ptr
     pop  ecx
 
-    ; copy 16 bytes
+    ; copy 16 bytes raw — cursor uses system colours 0-15, no remap needed
     push ecx
     push esi
     mov  esi, edx
@@ -356,7 +356,7 @@ cursor_load_bmp:
 .loaded:
     ; The transparent colour index is the desktop background colour (0x01 = dark blue).
     ; Store it so cursor_draw_bmp can skip transparent pixels.
-    mov  byte [cursor_bmp_transp], 0x01
+    mov  byte [cursor_bmp_transp], 0x01  ; index 1 = dark blue = transparent
     mov  byte [cursor_use_bmp],    1
     jmp  .done
 
@@ -518,7 +518,7 @@ cursor_bg:  times 256 db 0   ; up to 16×16 saved background
 
 ; ── BMP cursor data ──────────────────────────────────────────────────────────
 cursor_use_bmp:      db 0           ; 1 = use bitmap cursor, 0 = use arrow
-cursor_bmp_transp:   db 0x01        ; palette index treated as transparent
+cursor_bmp_transp:   db 0x01       ; palette index treated as transparent
                      dw 0           ; align
 cursor_bmp_pixels:   times 256 db 0 ; 16×16 palette-index pixel data (top-row first)
 cursor_bmp_name:     db 'cursor', 0 ; ClaudeFS filename to search
