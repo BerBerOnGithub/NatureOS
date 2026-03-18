@@ -59,6 +59,7 @@ bd_install_stub:
 
 ; ── bd_do_int13 ───────────────────────────────────────────────────────────────
 bd_do_int13:
+    pushad
     push esi
     mov  esi, bd_dbg_int13_enter
     call serial_print
@@ -173,7 +174,7 @@ bd_stub_code:
     mov  fs, ax
     mov  gs, ax
     mov  ss, ax
-    mov  esp, [0x7F10]      ; restore ESP — return addr is on stack
+    mov  esp, [BD_STUB_ESP] ; restore ESP — return addr is on stack
     mov  al, 0x11
     out  0x20, al
     out  0xA0, al
@@ -192,6 +193,7 @@ bd_stub_code:
     out  0x21, al
     mov  al, 0xFF
     out  0xA1, al
+    popad
     sti
     ret
 bd_stub_code_end:
