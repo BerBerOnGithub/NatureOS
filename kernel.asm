@@ -13,9 +13,10 @@
 ;    pm/          PM shell, VGA/kbd/PIT drivers, PM driver registry
 ;
 ; Boot flow:
-;   kernel_main +' drv_rm_init +' real-mode shell
-;   "pm" command +' drv_rm_shutdown +' [switch] +' pm_drv_init +' PM shell
-;   "exit" in PM +' pm_drv_shutdown +' [switch] +' drv_rm_init +' real-mode shell
+;   kernel_main -> drv_rm_init -> boot_menu
+;   [1] -> vbe_init -> boot_to_pm -> PM desktop
+;   [2] -> rm_shell_loop (real-mode text shell)
+;   "exit" in PM -> drv_rm_init -> rm_shell_loop
 ;
 ; Assemble: nasm -f bin -o kernel.bin kernel.asm
 ; ===========================================================================
@@ -37,7 +38,9 @@ ATTR_MAGENTA  equ 0x0D
 FORTUNE_COUNT equ 10
 
 ; -
-; Kernel entry point
+; Kernel entry point  -- MUST stay small: everything here counts toward
+; the 0x100-byte budget for the syscall trampoline pad below.
+; -
 kernel_main:
     cli
     xor  ax, ax
@@ -53,11 +56,11 @@ kernel_main:
     mov  [boot_ticks_hi], cx
     mov  [boot_ticks_lo], dx
 
-    ; Probe and set VESA framebuffer (must happen in real mode)
-    call vbe_init
+    ; Initialise real-mode drivers (sets text mode, flushes kbd, speaker off)
+    call drv_rm_init
 
-    ; Boot straight to PM " no RM shell
-    call boot_to_pm
+    ; Show boot menu - defined after the times pad below
+    call boot_menu
 
     ; Should never return, but halt just in case
     cli
@@ -66,7 +69,6 @@ kernel_main:
 ; -
 ; boot_to_pm
 ; Switches to 32-bit protected mode unconditionally.
-; Mirrors cmd_pm in cmd_system.asm but without the user prompt.
 ; -
 boot_to_pm:
     ; Enable A20 line
@@ -94,8 +96,8 @@ boot_to_pm:
     jmp  0x08:pm_entry      ; far jump flushes prefetch, loads CS=0x08
 
 ; -
-; Syscall trampoline " must land at offset 0x100 from ORG 0x8000 = 0x8100
-; Pad from here (after kernel_main's ~30 bytes) up to offset 0x100
+; Syscall trampoline - must land at offset 0x100 from ORG 0x8000 = 0x8100
+; Pad from here up to offset 0x100
 ; -
 times 0x100 - ($ - $$) db 0x90
 syscall_entry:
@@ -120,7 +122,411 @@ syscall_entry:
 %include "commands/data.asm"
 
 ; -
-; 32-bit components  [BITS 32]  (included last " never reached by 16-bit flow)
+; boot_menu - arrow-key selection boot menu
+;
+; UP/DOWN move highlight bar, Enter confirms, 1/2 still work as shortcuts.
+; Selected row renders bright white on blue (shell_attr=0x30).
+; Normal row renders with black background (shell_attr=0x00).
+;
+; Screen layout rows (0-based):
+;   15 = option 1 row    (mnu_sel_row_1)
+;   17 = option 2 row    (mnu_sel_row_2)
+; -
+mnu_sel_row_1  equ 15
+mnu_sel_row_2  equ 17
+
+boot_menu:
+    call screen_clear
+    mov  byte [shell_attr], 0x00
+
+    mov  si, str_banner
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_top
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_title
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_sub_a
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_sub_b
+    mov  bl, 0x03
+    call puts_c
+    mov  si, str_mnu_sub_c
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_sep
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    ; blank + opt1 placeholder + blank + opt2 placeholder + blank
+    mov  si, str_mnu_blank
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_blank
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_blank
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_blank
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_blank
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_sep
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_hint_a
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_hint_b
+    mov  bl, ATTR_NORMAL
+    call puts_c
+    mov  si, str_mnu_hint_c
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    mov  si, str_mnu_bot
+    mov  bl, ATTR_CYAN
+    call puts_c
+
+    ; initial selection = option 1
+    mov  byte [mnu_sel], 0
+    call mnu_draw_opt1
+    call mnu_draw_opt2
+
+    ; hide hardware cursor
+    mov  ah, 0x01
+    mov  cx, 0x2000
+    int  0x10
+
+.key_loop:
+    xor  ah, ah
+    int  0x16               ; AL=ascii AH=scancode
+
+    cmp  al, 13             ; Enter = confirm
+    je   .confirm
+    cmp  al, '1'
+    je   .pick1
+    cmp  al, '2'
+    je   .pick2
+    test al, al             ; extended key prefix?
+    jnz  .key_loop
+    cmp  ah, 0x48           ; up arrow
+    je   .move_up
+    cmp  ah, 0x50           ; down arrow
+    je   .move_down
+    jmp  .key_loop
+
+.move_up:
+    cmp  byte [mnu_sel], 0
+    je   .key_loop
+    mov  byte [mnu_sel], 0
+    call mnu_draw_opt1
+    call mnu_draw_opt2
+    jmp  .key_loop
+
+.move_down:
+    cmp  byte [mnu_sel], 1
+    je   .key_loop
+    mov  byte [mnu_sel], 1
+    call mnu_draw_opt1
+    call mnu_draw_opt2
+    jmp  .key_loop
+
+.pick1:
+    mov  byte [mnu_sel], 0
+    call mnu_draw_opt1
+    call mnu_draw_opt2
+    jmp  .confirm
+
+.pick2:
+    mov  byte [mnu_sel], 1
+    call mnu_draw_opt1
+    call mnu_draw_opt2
+    jmp  .confirm
+
+.confirm:
+    mov  ah, 0x01           ; restore cursor
+    mov  cx, 0x0607
+    int  0x10
+    mov  byte [shell_attr], ATTR_BRIGHT
+    cmp  byte [mnu_sel], 0
+    je   .go_pm
+    jmp  .go_rm
+
+.go_pm:
+    mov  byte [shell_attr], 0x00
+    mov  ah, 0x02
+    xor  bh, bh
+    xor  dx, dx
+    int  0x10
+    call screen_clear
+    mov  byte [shell_attr], ATTR_BRIGHT
+    mov  si, str_booting_pm
+    mov  bl, ATTR_CYAN
+    call puts_c
+    call nl
+    call vbe_init
+    call boot_to_pm
+    cli
+    hlt
+
+.go_rm:
+    ; reset shell_attr and cursor to top-left before clearing
+    ; so screen_clear fills black, not blue
+    mov  byte [shell_attr], 0x00
+    mov  ah, 0x02
+    xor  bh, bh
+    xor  dx, dx
+    int  0x10
+    call screen_clear
+    mov  byte [shell_attr], ATTR_BRIGHT
+    mov  si, str_booting_rm
+    mov  bl, ATTR_GREEN
+    call puts_c
+    call nl
+    mov  si, str_banner
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_motd
+    mov  bl, ATTR_NORMAL
+    call puts_c
+    jmp  rm_shell_loop      ; explicit jump - helpers sit between here and the loop
+
+; -
+; mnu_draw_opt1 / mnu_draw_opt2 - redraw one option row in-place
+; Selected = blue bg (shell_attr 0x30), bright white text
+; Normal   = black bg (shell_attr 0x00), yellow key + white desc
+; -
+mnu_draw_opt1:
+    push ax
+    push bx
+    push dx
+    mov  ah, 0x02
+    xor  bh, bh
+    mov  dh, mnu_sel_row_1
+    xor  dl, dl
+    int  0x10
+    cmp  byte [mnu_sel], 0
+    jne  .normal1
+    ; selected: border+gap black, arrow+desc on blue bg
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_border
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_gap
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  byte [shell_attr], 0x30
+    mov  si, str_mnu_arrow_on
+    mov  bl, 0x0F
+    call puts_c
+    mov  si, str_mnu_o1desc
+    mov  bl, 0x0F
+    call puts_c
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_opt_r
+    mov  bl, ATTR_CYAN
+    call puts_c
+    jmp  .done1
+.normal1:
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_border
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_gap
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_arrow_off
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_o1desc
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_opt_r
+    mov  bl, ATTR_CYAN
+    call puts_c
+.done1:
+    mov  byte [shell_attr], 0x00
+    pop  dx
+    pop  bx
+    pop  ax
+    ret
+
+mnu_draw_opt2:
+    push ax
+    push bx
+    push dx
+    mov  ah, 0x02
+    xor  bh, bh
+    mov  dh, mnu_sel_row_2
+    xor  dl, dl
+    int  0x10
+    cmp  byte [mnu_sel], 1
+    jne  .normal2
+    ; selected: border+gap black, arrow+desc on blue bg
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_border
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_gap
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  byte [shell_attr], 0x30
+    mov  si, str_mnu_arrow_on
+    mov  bl, 0x0F
+    call puts_c
+    mov  si, str_mnu_o2desc
+    mov  bl, 0x0F
+    call puts_c
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_opt_r
+    mov  bl, ATTR_CYAN
+    call puts_c
+    jmp  .done2
+.normal2:
+    mov  byte [shell_attr], 0x00
+    mov  si, str_mnu_border
+    mov  bl, ATTR_CYAN
+    call puts_c
+    mov  si, str_mnu_gap
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_arrow_off
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_o2desc
+    mov  bl, ATTR_BRIGHT
+    call puts_c
+    mov  si, str_mnu_opt_r
+    mov  bl, ATTR_CYAN
+    call puts_c
+.done2:
+    mov  byte [shell_attr], 0x00
+    pop  dx
+    pop  bx
+    pop  ax
+    ret
+
+mnu_sel:  db 0
+
+; -
+; rm_shell_loop - real-mode interactive shell
+; pm_exit jumps directly here (skipping the boot menu).
+; -
+rm_shell_loop:
+    call shell_prompt
+    call shell_readline
+    call shell_exec
+    jmp  rm_shell_loop
+
+; -
+; Boot menu strings  (CP437 double-line box, width=56)
+; ╔═54═╗  ║  ╠═╣  ╚═╝   ► = 0x10   • = 0x07
+; -
+
+; ╔══════════════════════════════════════════════════════╗
+str_mnu_top:
+    db 13, 10
+    db 201, 205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205, 187, 13, 10, 0
+
+; ║══════ NatureOS Boot Menu ══════║
+str_mnu_title:
+    db 186, 205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205
+    db ' NatureOS Boot Menu '
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205, 186, 13, 10, 0
+
+; ║ (subtitle border - cyan)
+str_mnu_sub_a:
+    db 186, '            ', 0
+; NatureOS v2.0  •  Build 2.0.0  (dark cyan)
+str_mnu_sub_b:
+    db 'NatureOS v2.0  ', 7, '  Build 2.0.0  ', 0
+; closing spaces + ║
+str_mnu_sub_c:
+    db '           ', 186, 13, 10, 0
+
+; ╠══════════════════════════════════════════════════════╣
+str_mnu_sep:
+    db 204, 205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205, 185, 13, 10, 0
+
+; ║                                                      ║
+str_mnu_blank:
+    db 186, '                                                      ', 186, 13, 10, 0
+
+; ║  (border char alone, always black bg)
+str_mnu_border:
+    db 186, 0
+; two spaces printed on highlight bg for selected row
+str_mnu_gap:
+    db ' ', 0
+
+; ►  selected arrow (yellow) / unselected space
+str_mnu_arrow_on:
+    db 16, ' ', 0      ; '► '
+str_mnu_arrow_off:
+    db ' ', ' ', 0     ; '  '
+
+; Graphical desktop  - WM, mouse, network  (description, 48 chars)
+str_mnu_o1desc:
+    db 'Graphical desktop   - WM, mouse, network          ', 0
+
+; Text-mode shell    - BIOS, FS, apps      (description, 48 chars)
+str_mnu_o2desc:
+    db 'Text-mode shell     - BIOS, FS, apps              ', 0
+
+;   ║\r\n  (right side of option row - cyan)
+str_mnu_opt_r:
+    db ' ', 186, 13, 10, 0
+
+; ║           (hint row left border - cyan)
+str_mnu_hint_a:
+    db 186, '           ', 0
+; Use arrows or 1/2.  Enter = confirm.  (hint text - normal grey)
+str_mnu_hint_b:
+    db 'arrows/1/2 select.  Enter = boot  ', 0
+; closing spaces + ║ (cyan)
+str_mnu_hint_c:
+    db '         ', 186, 13, 10, 0
+
+; ╚══════════════════════════════════════════════════════╝
+str_mnu_bot:
+    db 200, 205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205,205,205,205,205,205,205
+    db     205,205,205,205, 188, 13, 10, 0
+str_booting_pm:
+    db ' Booting Protected Mode desktop...', 0
+str_booting_rm:
+    db ' Booting Real-Mode shell...', 0
+
+; -
+; 32-bit components  [BITS 32]  (included last - never reached by 16-bit flow)
 ; -
 %include "pm/pm_shell.asm"
 %include "pm/gfx.asm"

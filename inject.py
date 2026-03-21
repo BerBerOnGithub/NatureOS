@@ -91,7 +91,7 @@ def set_entry(raw_dir, idx, name, start, size, flags):
         name_b, start, size, flags, b'\x00\x00\x00\x00')
 
 def alloc_sector(entries, total_sects):
-    """Find first free sector after DATA_START by high-watermark-
+    """Find first free sector after DATA_START by high-watermark"""
     high = DATA_START
     for e in entries:
         if e['flags'] == FLAG_USED:

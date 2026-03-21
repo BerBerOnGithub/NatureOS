@@ -38,6 +38,10 @@ pm_scancode_table:
     db 39,  '`', 0,   92,  'z', 'x', 'c', 'v'   ; 28-2F
     db 'b', 'n', 'm', ',', '.', '/', 0,   '*'    ; 30-37
     db 0,   ' '                                   ; 38-39
+    db 0,   0,   0,   0,   0,   0,   0,   0      ; 3A-41 (caps/F1-F8)
+    db 0,   0,   0,   0,   0,   '7', '8', '9'    ; 42-49 (F9/F10/NumLk/ScLk/num7/8/9)
+    db '-', '4', '5', '6', '+', '1', '2', '3'    ; 4A-51 (num-/4/5/6/+/1/2/3)
+    db '0', '.'                                   ; 52-53 (num0/.)
 
 ; Shifted (scan codes 0x00-0x39)
 pm_scancode_shift:
@@ -49,13 +53,17 @@ pm_scancode_shift:
     db 34,  '~', 0,   '|', 'Z', 'X', 'C', 'V'   ; 28-2F
     db 'B', 'N', 'M', '<', '>', '?', 0,   '*'    ; 30-37
     db 0,   ' '                                   ; 38-39
+    db 0,   0,   0,   0,   0,   0,   0,   0      ; 3A-41 (caps/F1-F8)
+    db 0,   0,   0,   0,   0,   '7', '8', '9'    ; 42-49 (F9/F10/NumLk/ScLk/num7/8/9)
+    db '-', '4', '5', '6', '+', '1', '2', '3'    ; 4A-51 (num-/4/5/6/+/1/2/3)
+    db '0', '.'                                   ; 52-53 (num0/.)
 
 ; -
 ; Shell strings
 ; -
 pm_banner:
     db 13, 10
-    db ' -', 13, 10
+    db ' +----------------------+----------------------------+', 13, 10
     db ' |   NatureOS v2.0 - 32-bit Protected Mode Shell   |', 13, 10
     db ' |   No BIOS. Direct hardware access.              |', 13, 10
     db ' -', 13, 10
@@ -65,7 +73,6 @@ pm_prompt:          db 'PM> ', 0
 
 ; Command keyword strings
 pm_str_cmd_help:    db 'help', 0
-pm_str_cmd_ver:     db 'ver', 0
 pm_str_cmd_clear:   db 'clear', 0
 pm_str_cmd_exit:    db 'exit', 0
 pm_str_pfx_echo:    db 'echo ', 0
@@ -74,15 +81,11 @@ pm_str_cmd_probe:   db 'probe', 0
 pm_str_cmd_drivers: db 'drivers', 0
 pm_str_cmd_pci:     db 'pci', 0
 pm_str_cmd_ifconfig: db 'ifconfig', 0
-pm_str_cmd_nicdbg:   db 'nicdbg', 0
 pm_str_cmd_arp:      db 'arp', 0
 pm_str_pfx_arping:   db 'arping ', 0
 pm_str_pfx_ping:     db 'ping ', 0
-pm_str_cmd_netdbg:   db 'netdbg', 0
 pm_str_cmd_term:     db 'term', 0
 pm_str_cmd_helpwin:  db 'helpwin', 0
-pm_str_cmd_diskinfo: db 'diskinfo', 0
-pm_str_cmd_atadbg:   db 'atadbg', 0
 pm_str_cmd_sw:       db 'stopwatch', 0
 pm_str_pfx_timer:    db 'timer ', 0
 pm_str_cmd_files:    db 'files', 0
@@ -114,41 +117,31 @@ pm_str_exit_msg:
 
 pm_str_help_text:
     db 13, 10
-    db ' -', 13, 10
-    db ' |  PM Shell v2.0       |  Command Reference         |', 13, 10
-    db ' -', 13, 10
+    db ' +----------------------+----------------------------+', 13, 10
+    db ' |  NatureOS v2.0  PM   |  Command Reference         |', 13, 10
+    db ' +----------------------+----------------------------+', 13, 10
     db ' | help                 | this screen                |', 13, 10
-    db ' | ver                  | version info               |', 13, 10
-    db ' | clear                | clear screen               |', 13, 10
+    db ' | clear                | clear terminal             |', 13, 10
     db ' | echo <text>          | print text                 |', 13, 10
-    db ' | calc <n> <op> <n>    | calculator (-*,/)       |', 13, 10
-    db ' | probe                | verify 32-bit PM (hex dump)|', 13, 10
+    db ' | calc <n> <op> <n>    | calculator (+,-,*,/)       |', 13, 10
+    db ' | probe                | verify 32-bit PM           |', 13, 10
     db ' | drivers              | show loaded PM drivers     |', 13, 10
     db ' | pci                  | list all PCI devices       |', 13, 10
     db ' | ifconfig             | NIC MAC + link status      |', 13, 10
     db ' | arp                  | show ARP cache             |', 13, 10
     db ' | arping <ip>          | send ARP request           |', 13, 10
-    db ' | ping <ip>            | send ICMP echo (4 packets) |', 13, 10
+    db ' | ping <ip>            | ICMP echo (4 packets)      |', 13, 10
     db ' | dns <hostname>       | resolve hostname via DNS   |', 13, 10
-    db ' | stopwatch            | stopwatch (run again=start/|', 13, 10
-    db ' |                      | stop, "stopwatch reset")   |', 13, 10
+    db ' | stopwatch            | stopwatch window           |', 13, 10
     db ' | timer MM:SS          | countdown timer            |', 13, 10
-    db ' | files                | open file browser window   |', 13, 10
-    db ' | ls                   | list files (terminal)      |', 13, 10
+    db ' | term / files         | open window                |', 13, 10
+    db ' | ls                   | list files                 |', 13, 10
     db ' | cat <name>           | print file contents        |', 13, 10
-    db ' | rm <name>            | delete file from data disk |', 13, 10
+    db ' | rm <name>            | delete file                |', 13, 10
     db ' | hexdump <name>       | hex dump of a file         |', 13, 10
+    db ' | savescr              | save screenshot to disk    |', 13, 10
     db ' | exit                 | return to real mode        |', 13, 10
-    db ' | savescr              | save pending screenshot    |', 13, 10
-    db ' -', 13, 10, 10, 0
-
-pm_str_ver_text:
-    db 13, 10
-    db ' NatureOS v2.0 - 32-bit Protected Mode', 13, 10
-    db ' Architecture: x86 32-bit', 13, 10
-    db ' Screen:       Direct VGA (0xB8000)', 13, 10
-    db ' Keyboard:     Direct PS/2 (port 0x60)', 13, 10
-    db ' BIOS:         Not available', 13, 10, 10, 0
+    db ' +----------------------+----------------------------+', 13, 10, 10, 0
 
 ; Calc strings
 pm_str_eq:          db ' = ', 0

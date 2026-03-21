@@ -31,8 +31,6 @@ str_prompt_d:    db '# ', 0
 ; Command keyword strings
 ; -
 str_cmd_help:        db 'help', 0
-str_cmd_hello:       db 'hello', 0
-str_cmd_run_hello:   db 'run hello.com', 0
 str_cmd_ver:         db 'ver', 0
 str_cmd_clear:       db 'clear', 0
 str_cmd_reboot:      db 'reboot', 0
@@ -47,7 +45,6 @@ str_cmd_fortune:     db 'fortune', 0
 str_cmd_colors:      db 'colors', 0
 str_cmd_sys:         db 'sys', 0
 str_cmd_guess:       db 'guess', 0
-str_cmd_ascii:       db 'ascii', 0
 str_quit:            db 'quit', 0
 
 str_cmd_pm:          db 'pm', 0
@@ -157,11 +154,10 @@ str_ascii_hdr:   db ' ASCII Table (32-126)', 13, 10, 0
 ; -
 str_help_pg1:
     db 13, 10
-    db ' -', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db ' |      NatureOS v2.0         |  Command Reference  (1 of 2)  |', 13, 10
-    db ' -', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db ' | help                       | this screen (paged)           |', 13, 10
-    db ' | hello / run hello.com      | Hello World program           |', 13, 10
     db ' | echo <text>                | print text to screen          |', 13, 10
     db ' | clear                      | clear the screen              |', 13, 10
     db ' | reboot                     | reboot the machine            |', 13, 10
@@ -170,22 +166,24 @@ str_help_pg1:
     db ' | color [XX]                 | set color or show palette     |', 13, 10
     db ' | beep                       | sound the PC speaker          |', 13, 10
     db ' | fortune                    | display a random quote        |', 13, 10
-    db ' -', 13, 10
+    db ' | guess                      | number guessing game (1-100)  |', 13, 10
+    db ' | colors                     | show all 16 colour swatches   |', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db 13, 10
     db 0
 
 ; "Press any key" prompt (shown at bottom of page 1)
 str_help_more:
-    db ' - Press any key for page 2 --', 13, 10, 0
+    db ' -- Press any key for page 2 --', 13, 10, 0
 
 ; -
 ; Help text - page 2 (rows used: 1 blank + 3 header + 9 cmds + 1 blank = 14)
 ; -
 str_help_pg2:
     db 13, 10
-    db ' -', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db ' |      NatureOS v2.0         |  Command Reference  (2 of 2)  |', 13, 10
-    db ' -', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db ' | sys                        | full system snapshot          |', 13, 10
     db ' | date                       | show RTC date                 |', 13, 10
     db ' | time                       | show RTC time                 |', 13, 10
@@ -193,11 +191,12 @@ str_help_pg2:
     db ' | settime                    | set the RTC time              |', 13, 10
     db ' | guess                      | number guessing game (1-100)  |', 13, 10
     db ' | colors                     | show all 16 colour swatches   |', 13, 10
-    db ' | ascii                      | ASCII table (32-126)          |', 13, 10
+    db ' | ls                         | list filesystem files         |', 13, 10
+    db ' | run <name>                 | run an app from ClaudeFS      |', 13, 10
     db ' | probe                      | verify you are in real mode   |', 13, 10
     db ' | drivers                    | show loaded RM drivers        |', 13, 10
     db ' | pm                         | switch to 32-bit prot. mode   |', 13, 10
-    db ' -', 13, 10
+    db ' +----------------------------+--------------------------------+', 13, 10
     db 13, 10
     db 0
 

@@ -92,10 +92,11 @@ cmd_ls:
     inc  bx
     loop .copy_name
 
-    ; read size (dword at entry+20, we only need low word for display)
-    mov  ax, [es:si+4]       ; si is now at entry+16 (after name copy)
-                             ; so si+4 = entry+20 = size low word
-    mov  [fs_tmp_size], ax
+    ; read size (dword at entry+20, si is now at entry+16 after name copy)
+    mov  ax, [es:si+4]       ; low word of size  (entry+20)
+    mov  dx, [es:si+6]       ; high word of size (entry+22)
+    mov  [fs_tmp_size],   ax ; save low word
+    mov  [fs_tmp_size+2], dx ; save high word
 
     pop  si                  ; restore entry start
     pop  cx
@@ -107,13 +108,13 @@ cmd_ls:
     mov  bl, ATTR_BRIGHT
     call puts_c
 
-    ; print size
+    ; print size using 32-bit print (DX:AX)
     mov  si, str_ls_sep
     mov  bl, ATTR_NORMAL
     call puts_c
     mov  ax, [fs_tmp_size]
-    xor  ah, ah
-    call print_uint
+    mov  dx, [fs_tmp_size+2]
+    call print_uint32
     mov  si, str_ls_bytes
     mov  bl, ATTR_NORMAL
     call puts_c
@@ -275,7 +276,7 @@ cmd_run:
 ; Data
 ; -
 fs_name_buf:   times NAME_LEN db 0
-fs_tmp_size:   dw 0
+fs_tmp_size:   dd 0
 fs_tmp_off:    dw 0
 run_vec:       dw 0x0000, RUN_SEG    ; far pointer offset:seg
 

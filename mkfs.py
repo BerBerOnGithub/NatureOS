@@ -31,7 +31,7 @@ NAME_LEN   = 16
 ENTRY_SIZE = NAME_LEN + 4 + 4   # 24 bytes
 
 def assemble_apps():
-    """Find all .asm files in apps/ (recursively) and assemble them to .bin-
+    """Find all .asm files in apps/ (recursively) and assemble them to .bin"""
     asm_files = glob.glob(os.path.join(APPS_DIR, '**', '*.asm'), recursive=True)
     if not asm_files:
         return

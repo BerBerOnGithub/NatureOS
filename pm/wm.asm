@@ -142,13 +142,11 @@ wm_draw_one:
     mov  ecx, [edi+8]
     mov  edx, [edi+12]
 
-    ; - client area " always fill black -
+    ; - fill entire window rect first to erase anything underneath -
     push eax
     push ebx
     push ecx
     push edx
-    add  ebx, WM_TITLE_H
-    sub  edx, WM_TITLE_H
     mov  esi, WM_C_BODY
     call fb_fill_rect
     pop  edx
@@ -156,7 +154,7 @@ wm_draw_one:
     pop  ebx
     pop  eax
 
-.skip_body:
+    ; - client area - already covered by full fill above, kept for clarity -
 
     ; - title bar -
     push eax
@@ -232,10 +230,35 @@ wm_draw_one:
     popa
     ret
 
+; - wm_str_len - count chars in null-terminated string at ESI -> EAX
+wm_str_len:
+    push esi
+    xor  eax, eax
+.wsl_loop:
+    cmp  byte [esi], 0
+    je   .wsl_done
+    inc  eax
+    inc  esi
+    jmp  .wsl_loop
+.wsl_done:
+    pop  esi
+    ret
+
+; - wm_btn_width - pixel width for title at ESI: strlen*8+16, min 60
+wm_btn_width:
+    call wm_str_len
+    shl  eax, 3
+    add  eax, 16
+    cmp  eax, 60
+    jge  .wbw_ok
+    mov  eax, 60
+.wbw_ok:
+    ret
+
 ; - wm_draw_taskbar_btns -
 wm_draw_taskbar_btns:
     pusha
-    mov  dword [wm_tbx], 90     ; start after the brand text
+    mov  dword [wm_tbx], 90
     mov  dword [wm_i],   0
 .loop:
     mov  ecx, [wm_i]
@@ -247,10 +270,15 @@ wm_draw_taskbar_btns:
     cmp  byte [edi+17], 1
     jne  .next
 
+    ; dynamic button width from title
+    mov  esi, [edi+20]
+    call wm_btn_width
+    mov  [wm_cur_btn_w], eax
+
     ; button fill
     mov  eax, [wm_tbx]
     mov  ebx, WM_TASKBAR_Y + 2
-    mov  ecx, 88
+    mov  ecx, [wm_cur_btn_w]
     mov  edx, WM_TASKBAR_H - 4
     mov  esi, 0x07
     cmp  byte [edi+18], 1
@@ -262,7 +290,7 @@ wm_draw_taskbar_btns:
     ; button border
     mov  eax, [wm_tbx]
     mov  ebx, WM_TASKBAR_Y + 2
-    mov  ecx, 88
+    mov  ecx, [wm_cur_btn_w]
     mov  edx, WM_TASKBAR_H - 4
     mov  esi, 0x0F
     call fb_draw_rect_outline
@@ -270,7 +298,7 @@ wm_draw_taskbar_btns:
     ; button label
     mov  esi, [edi+20]
     mov  ebx, [wm_tbx]
-    add  ebx, 4
+    add  ebx, 8
     mov  ecx, WM_TASKBAR_Y + 6
     mov  dl,  0x0F
     mov  dh,  0x07
@@ -280,13 +308,16 @@ wm_draw_taskbar_btns:
 .blbl:
     call fb_draw_string
 
-    add  dword [wm_tbx], 92
+    ; advance by width + 4px gap
+    mov  eax, [wm_cur_btn_w]
+    add  eax, 4
+    add  [wm_tbx], eax
 
 .next:
     inc  dword [wm_i]
     jmp  .loop
 .done:
-    call wm_draw_taskbar_clock  ; always draw clock on right side of taskbar
+    call wm_draw_taskbar_clock
     popa
     ret
 
@@ -442,14 +473,17 @@ wm_hide_startmenu:
 
 ; - wm_draw_all -
 ; Draw order: desktop +' terminal chrome+content +' all other windows +' taskbar
-; This ensures non-terminal windows always appear on top of the terminal.
+; Draw order:
+;   Pass 1: all unfocused open windows (any type), back to front
+;   Pass 2: the focused window (any type) drawn last = always on top
+; Terminal gets term_redraw called right after wm_draw_one whenever it appears.
 wm_draw_all:
     pusha
-    call cursor_erase           ; remove cursor before any drawing
+    call cursor_erase
     call wm_draw_desktop
-    call icons_draw         ; icons are part of desktop " windows draw over them
+    call icons_draw
 
-    ; Pass 1: draw the terminal window (chrome + content) first
+    ; Pass 1: all unfocused windows
     mov  dword [wm_i], 0
 .p1loop:
     mov  ecx, [wm_i]
@@ -457,18 +491,29 @@ wm_draw_all:
     jge  .p1done
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
-    cmp  byte [edi+17], 1
+    cmp  byte [edi+17], 1       ; open?
     jne  .p1next
+    cmp  byte [edi+18], 1       ; focused? skip for pass 2
+    je   .p1next
+    call wm_draw_one
     cmp  byte [edi+16], WM_TERM
     jne  .p1next
-    call wm_draw_one            ; draw chrome (fills client black)
-    call term_redraw            ; paint text buffer on top
+    call term_redraw            ; repaint terminal content after chrome
 .p1next:
     inc  dword [wm_i]
     jmp  .p1loop
 .p1done:
 
-    ; Pass 2: draw all non-terminal windows on top
+    call wm_draw_taskbar_btns
+    cmp  byte [sm_open], 1
+    jne  .no_sm
+    call wm_draw_startmenu
+.no_sm:
+    ; draw content for non-terminal windows BEFORE pass 2
+    ; so focused window (terminal or otherwise) is always the last thing drawn
+    call wm_redraw_contents
+
+    ; Pass 2: focused window drawn last (always on top)
     mov  dword [wm_i], 0
 .p2loop:
     mov  ecx, [wm_i]
@@ -476,23 +521,37 @@ wm_draw_all:
     jge  .p2done
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
-    cmp  byte [edi+17], 1
+    cmp  byte [edi+17], 1       ; open?
     jne  .p2next
-    cmp  byte [edi+16], WM_TERM
-    je   .p2next                ; already drawn in pass 1
+    cmp  byte [edi+18], 1       ; focused?
+    jne  .p2next
     call wm_draw_one
+    cmp  byte [edi+16], WM_TERM
+    jne  .p2content
+    call term_redraw            ; repaint terminal content after chrome
+    jmp  .p2next
+.p2content:
+    ; for focused non-terminal window, redraw its content on top too
+    movzx eax, byte [edi+16]
+    cmp  eax, WM_CLOCK
+    je   .p2clock
+    cmp  eax, WM_FILES
+    je   .p2files
+    cmp  eax, WM_HELP
+    je   .p2help
+    jmp  .p2next
+.p2clock:
+    call wm_draw_clock
+    jmp  .p2next
+.p2files:
+    call wm_draw_files
+    jmp  .p2next
+.p2help:
+    call wm_draw_help
 .p2next:
     inc  dword [wm_i]
     jmp  .p2loop
 .p2done:
-    call wm_draw_taskbar_btns
-    ; draw start menu on top of taskbar if open
-    cmp  byte [sm_open], 1
-    jne  .no_sm
-    call wm_draw_startmenu
-.no_sm:
-    ; draw content for all non-terminal windows
-    call wm_redraw_contents
     call cursor_save_bg
     call cursor_draw
     call gfx_flush
@@ -689,36 +748,67 @@ wm_draw_close_x:
 
 ; - wm_hit_test -
 ; In:  EAX=mx  EBX=my
-; Out: CF=0 +' ECX=window index (topmost hit)  EDX=region(1=title 2=close 3=client)
-;      CF=1 +' desktop (no window hit)
+; Out: CF=0 -> ECX=window index (topmost hit)  EDX=region(1=title 2=close 3=client)
+;      CF=1 -> desktop (no window hit)
+; Tests focused window first (it draws on top), then others in reverse order.
 wm_hit_test:
     push eax
     push ebx
 
-    mov  ecx, WM_MAX_WINS - 1   ; scan top-to-bottom
+    ; --- Pass A: test the focused window first ---
+    xor  ecx, ecx
+.focused_scan:
+    cmp  ecx, WM_MAX_WINS
+    jge  .unfocused_scan
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1       ; open?
+    jne  .focused_next
+    cmp  byte [edi+18], 1       ; focused?
+    jne  .focused_next
+    jmp  .test_bounds            ; test this window
+.focused_next:
+    inc  ecx
+    jmp  .focused_scan
+
+    ; --- Pass B: test remaining windows in reverse table order ---
+.unfocused_scan:
+    mov  ecx, WM_MAX_WINS - 1
 .scan:
     cmp  ecx, 0
     jl   .miss
-
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
     cmp  byte [edi+17], 1
     jne  .snext
+    cmp  byte [edi+18], 1
+    je   .snext                  ; skip focused, already tested in pass A
 
+.test_bounds:
     ; x bounds check
     mov  edx, [edi+0]
     cmp  eax, edx
-    jl   .snext
+    jl   .bounds_miss
     add  edx, [edi+8]
     cmp  eax, edx
-    jge  .snext
+    jge  .bounds_miss
     ; y bounds check
     mov  edx, [edi+4]
     cmp  ebx, edx
-    jl   .snext
+    jl   .bounds_miss
     add  edx, [edi+12]
     cmp  ebx, edx
-    jge  .snext
+    jge  .bounds_miss
+    jmp  .bounds_hit
+
+.bounds_miss:
+    ; if we came from pass A (focused scan), move to pass B
+    ; if we came from pass B, go to next in reverse order
+    cmp  byte [edi+18], 1
+    je   .unfocused_scan        ; focused window missed - try unfocused ones
+    jmp  .snext                 ; unfocused window missed - try next
+
+.bounds_hit:
 
     ; - determine region -
     ; close button: x >= win_x+w-18  AND  y <= win_y+16
@@ -751,6 +841,7 @@ wm_hit_test:
     jmp  .hit
 
 .snext:
+    ; we're in the reverse scan (pass B)
     dec  ecx
     jmp  .scan
 
@@ -789,8 +880,8 @@ wm_on_click:
     jmp  .done
 
 .tb_windows:
-    ; in taskbar row " find which window button
-    mov  edx, 90            ; first button x (matches wm_draw_taskbar_btns)
+    ; taskbar window buttons - dynamic widths
+    mov  edx, 90
     xor  ecx, ecx
 .tbscan:
     cmp  ecx, WM_MAX_WINS
@@ -799,18 +890,24 @@ wm_on_click:
     add  edi, wm_table
     cmp  byte [edi+17], 1
     jne  .tb_next
+    push eax
+    mov  esi, [edi+20]
+    call wm_btn_width
+    mov  [wm_cur_btn_w], eax
+    pop  eax
     cmp  eax, edx
     jl   .tb_next
     mov  esi, edx
-    add  esi, 88
+    add  esi, [wm_cur_btn_w]
     cmp  eax, esi
     jge  .tb_next
-    call wm_set_focus        ; ECX = window index
+    call wm_set_focus
     call wm_draw_all
-
     jmp  .done
 .tb_next:
-    add  edx, 92
+    mov  esi, [wm_cur_btn_w]
+    add  esi, 4
+    add  edx, esi
     inc  ecx
     jmp  .tbscan
 
@@ -984,17 +1081,21 @@ wm_on_release:
 
 ; - wm_redraw_contents -
 ; Draw content for all open non-terminal windows (clock, files, help).
+; Unfocused windows first, focused window last so it stays on top.
 wm_redraw_contents:
     pusha
+    ; Pass A: unfocused windows
     mov  dword [wm_i], 0
 .loop:
     mov  ecx, [wm_i]
     cmp  ecx, WM_MAX_WINS
-    jge  .done
+    jge  .pass_b
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
     cmp  byte [edi+17], 1
     jne  .next
+    cmp  byte [edi+18], 1
+    je   .next                  ; skip focused in this pass
     movzx eax, byte [edi+16]
     cmp  eax, WM_CLOCK
     je   .doclock
@@ -1014,6 +1115,39 @@ wm_redraw_contents:
 .next:
     inc  dword [wm_i]
     jmp  .loop
+
+    ; Pass B: focused window only
+.pass_b:
+    mov  dword [wm_i], 0
+.loop_b:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .done
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .next_b
+    cmp  byte [edi+18], 1
+    jne  .next_b                ; only focused
+    movzx eax, byte [edi+16]
+    cmp  eax, WM_CLOCK
+    je   .doclock_b
+    cmp  eax, WM_FILES
+    je   .dofiles_b
+    cmp  eax, WM_HELP
+    je   .dohelp_b
+    jmp  .next_b
+.doclock_b:
+    call wm_draw_clock
+    jmp  .next_b
+.dofiles_b:
+    call wm_draw_files
+    jmp  .next_b
+.dohelp_b:
+    call wm_draw_help
+.next_b:
+    inc  dword [wm_i]
+    jmp  .loop_b
 .done:
     popa
     ret
@@ -1395,6 +1529,7 @@ wm_draw_files:
     add  edi, wm_table
 
     ; compute base text x, starting y, max y
+    ; reserve 12px at bottom for the summary footer
     mov  eax, [edi+0]
     add  eax, 6
     mov  [wm_fx], eax
@@ -1405,8 +1540,12 @@ wm_draw_files:
 
     mov  eax, [edi+4]
     add  eax, [edi+12]
-    sub  eax, 6
+    sub  eax, 18                ; reserve 18px for footer separator + text
     mov  [wm_fy_max], eax
+
+    ; zero file counters
+    mov  dword [wm_iso_count], 0
+    mov  dword [wm_dat_count], 0
 
     ; - Section 1: ISO (read-only) -
     mov  esi, wm_s_sec_iso
@@ -1462,6 +1601,7 @@ wm_draw_files:
 
     add  dword [wm_fy], 9
     add  esi, FS_ENT_SZ
+    inc  dword [wm_iso_count]
     dec  dword [wm_fcount]
     jmp  .fiso_row
 
@@ -1546,33 +1686,13 @@ wm_draw_files:
     mov  esi, wm_fbuf
     mov  ebx, [wm_fx]
     mov  ecx, [wm_fy]
-    mov  dl,  0x0F              ; bright white " writable
-    mov  dh,  WM_C_BODY
-    call fb_draw_string
-    pop  esi
-
-    ; draw file size at right side of window
-    push esi
-    mov  eax, [esi + 20]        ; file size in bytes
-    mov  edi, wm_fbuf2
-    call wm_fmt_size            ; convert bytes to "NNNb" or "NKb" string
-
-    ; get win_x + win_w - 36 for right-aligned position
-    mov  ecx, [wm_tmp_idx]
-    imul ebx, ecx, WM_STRIDE
-    add  ebx, wm_table
-    mov  eax, [ebx+0]           ; win_x
-    add  eax, [ebx+8]           ; + win_w
-    sub  eax, 36
-    mov  ebx, eax
-    mov  esi, wm_fbuf2
-    mov  ecx, [wm_fy]
-    mov  dl,  0x08              ; dark grey
+    mov  dl,  0x0F
     mov  dh,  WM_C_BODY
     call fb_draw_string
     pop  esi
 
     add  dword [wm_fy], 9
+    inc  dword [wm_dat_count]
 
 .fdata_next:
     add  esi, FSD_ENT_SZ
@@ -1599,7 +1719,98 @@ wm_draw_files:
     call fb_draw_string
 
 .fdone:
+    ; draw footer: thin separator line then "N ISO  N disk"
+    ; position at win_y + win_h - 16
+    mov  ecx, [wm_tmp_idx]
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+
+    ; horizontal separator line
+    mov  eax, [edi+0]
+    add  eax, 2
+    mov  ebx, [edi+4]
+    add  ebx, [edi+12]
+    sub  ebx, 15
+    mov  edx, [edi+8]
+    sub  edx, 4
+    mov  cl,  0x08
+    call fb_hline
+
+    ; build summary string in wm_fbuf: "ISO: N  Disk: N"
+    mov  edi, wm_fbuf
+    ; "ISO: "
+    mov  byte [edi+0], 'I'
+    mov  byte [edi+1], 'S'
+    mov  byte [edi+2], 'O'
+    mov  byte [edi+3], ':'
+    mov  byte [edi+4], ' '
+    add  edi, 5
+    ; iso count as decimal
+    mov  eax, [wm_iso_count]
+    call wm_write_dec_edi
+    ; "  Disk: "
+    mov  byte [edi+0], ' '
+    mov  byte [edi+1], ' '
+    mov  byte [edi+2], 'D'
+    mov  byte [edi+3], 'i'
+    mov  byte [edi+4], 's'
+    mov  byte [edi+5], 'k'
+    mov  byte [edi+6], ':'
+    mov  byte [edi+7], ' '
+    add  edi, 8
+    ; disk count
+    mov  eax, [wm_dat_count]
+    call wm_write_dec_edi
+    mov  byte [edi], 0
+
+    ; draw summary
+    mov  ecx, [wm_tmp_idx]
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    mov  ebx, [edi+0]
+    add  ebx, 6
+    mov  ecx, [edi+4]
+    add  ecx, [edi+12]
+    sub  ecx, 10
+    mov  esi, wm_fbuf
+    mov  dl,  0x08
+    mov  dh,  WM_C_BODY
+    call fb_draw_string
+
     popa
+    ret
+
+; - wm_write_dec_edi - write EAX as decimal to [EDI], advance EDI
+wm_write_dec_edi:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    mov  ecx, 0
+    mov  ebx, 10
+    test eax, eax
+    jnz  .push
+    mov  byte [edi], '0'
+    inc  edi
+    jmp  .wde_done
+.push:
+    xor  edx, edx
+    div  ebx
+    push edx
+    inc  ecx
+    test eax, eax
+    jnz  .push
+.pop:
+    pop  edx
+    add  dl, '0'
+    mov  [edi], dl
+    inc  edi
+    loop .pop
+.wde_done:
+    pop  edx
+    pop  ecx
+    pop  ebx
+    pop  eax
     ret
 
 
@@ -2026,6 +2237,7 @@ wm_drag_wx0:     dd 0
 wm_drag_wy0:     dd 0
 
 wm_tbx:          dd 0
+wm_cur_btn_w:    dd 0
 ; stopwatch/timer constants
 SW_MODE_SW    equ 0
 SW_MODE_TIMER equ 1
@@ -2061,6 +2273,8 @@ wm_fx:           dd 0
 wm_fy:           dd 0
 wm_fy_max:       dd 0
 wm_fcount:       dd 0
+wm_iso_count:    dd 0
+wm_dat_count:    dd 0
 
 wm_s_brand:      db 'NatureOS', 0
 wm_s_logo:       db 'NatureOS', 0
@@ -2074,7 +2288,7 @@ wm_s_help:       db 'About NatureOS', 0
 
 ; Help window content
 wm_s_help_title: db 'NatureOS  Build 2.0.0', 0
-wm_s_help_sep:   db '-', 0
+wm_s_help_sep:   db '------------------------------', 0
 wm_s_help_l1:    db 'A hobby OS built in x86 assembly,', 0
 wm_s_help_l2:    db 'running in 32-bit protected mode', 0
 wm_s_help_l3:    db 'with a VBE graphical desktop,', 0

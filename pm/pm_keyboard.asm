@@ -45,7 +45,13 @@ pm_getkey:
     je   .no_key
     cmp  al, 0xB7            ; PrtSc release " ignore
     je   .no_key
-    cmp  al, 0x37            ; PrtSc press " signal
+    cmp  al, 0x35            ; numpad /  (E0 prefix)
+    jne  .not_numdiv
+    mov  al, '/'
+    pop  ebx
+    ret
+.not_numdiv:
+    cmp  al, 0x37            ; PrtSc press -- signal
     jne  .no_key
     mov  al, 0xFF
     pop  ebx
@@ -65,7 +71,7 @@ pm_getkey:
     jnz  .no_key
 
     movzx ebx, al
-    cmp  ebx, 58
+    cmp  ebx, 84             ; 0x54 - include numpad range 0x47-0x53
     jae  .no_key
 
     cmp  byte [pm_shift], 0

@@ -22,7 +22,7 @@ if not os.path.exists(FLAT_IMG):
     print(f"ERROR: {FLAT_IMG} not found. Run build first.")
     sys.exit(1)
 
-print(f"[mkiso] Building {ISO_OUT} from {FLAT_IMG}-)
+print(f"[mkiso] Building {ISO_OUT} from {FLAT_IMG}")
 
 with open(FLAT_IMG, 'rb') as f:
     flat_data = f.read()

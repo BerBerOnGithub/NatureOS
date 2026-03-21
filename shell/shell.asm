@@ -38,14 +38,6 @@ shell_exec:
     call strcmp_buf
     je   cmd_help
 
-    mov  si, str_cmd_hello
-    call strcmp_buf
-    je   cmd_hello
-
-    mov  si, str_cmd_run_hello
-    call strcmp_buf
-    je   cmd_hello
-
     mov  si, str_cmd_clear
     call strcmp_buf
     je   cmd_clear
@@ -85,10 +77,6 @@ shell_exec:
     mov  si, str_cmd_guess
     call strcmp_buf
     je   cmd_guess
-
-    mov  si, str_cmd_ascii
-    call strcmp_buf
-    je   cmd_ascii
 
     mov  si, str_cmd_pm
     call strcmp_buf

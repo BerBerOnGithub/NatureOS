@@ -162,11 +162,6 @@ pm_exec:
     je   .help
 
     mov  esi, pm_input_buf
-    mov  edi, pm_str_cmd_ver
-    call pm_strcmp
-    je   .ver
-
-    mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_clear
     call pm_strcmp
     je   .clear
@@ -208,11 +203,6 @@ pm_exec:
     je   .ifconfig
 
     mov  esi, pm_input_buf
-    mov  edi, pm_str_cmd_nicdbg
-    call pm_strcmp
-    je   .nicdbg
-
-    mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_arp
     call pm_strcmp
     je   .arp
@@ -228,11 +218,6 @@ pm_exec:
     je   .ping
 
     mov  esi, pm_input_buf
-    mov  edi, pm_str_cmd_netdbg
-    call pm_strcmp
-    je   .netdbg
-
-    mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_term
     call pm_strcmp
     je   .term
@@ -241,11 +226,6 @@ pm_exec:
     mov  edi, pm_str_cmd_helpwin
     call pm_strcmp
     je   .helpwin
-
-    mov  esi, pm_input_buf
-    mov  edi, pm_str_cmd_diskinfo
-    call pm_strcmp
-    je   .diskinfo
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_sw
@@ -300,8 +280,6 @@ pm_exec:
 
 .help:  call pm_cmd_help
     jmp  .done
-.ver:   call pm_cmd_ver
-    jmp  .done
 .clear: call pm_cmd_clear
     jmp  .done
 .echo:  call pm_cmd_echo
@@ -316,23 +294,17 @@ pm_exec:
     jmp  .done
 .ifconfig:  call cmd_ifconfig
     jmp  .done
-.nicdbg:    call cmd_nicdbg
-    jmp  .done
 .arp:       call cmd_arp
     jmp  .done
 .arping:    call cmd_arping
     jmp  .done
 .ping:      call cmd_ping
     jmp  .done
-.netdbg:    call cmd_netdbg
-    jmp  .done
 .stopwatch: call pm_cmd_stopwatch
     jmp  .done
 .term:      call pm_cmd_term
     jmp  .done
 .helpwin:   call pm_cmd_helpwin
-    jmp  .done
-.diskinfo:  call pm_cmd_diskinfo
     jmp  .done
 .timer:     call pm_cmd_timer
     jmp  .done
@@ -390,147 +362,6 @@ pm_cmd_term:
 .done:
     popa
     ret
-
-; -
-; pm_cmd_diskinfo ,! probe all 4 ATA positions and print raw status bytes
-; -
-pm_cmd_diskinfo:
-    pusha
-
-    ; show VBE pitch for debugging
-    mov  esi, di_str_pitch
-    mov  bl, 0x0E
-    call term_puts
-    mov  eax, [gfx_fb_pitch]
-    call term_print_hex_word
-    call term_newline
-
-    ; show bd_ready and bd_drive
-    mov  esi, di_str_ready
-    mov  bl, 0x0B
-    call term_puts
-    movzx eax, byte [bd_ready]
-    call term_print_hex_byte
-    call term_newline
-
-    mov  esi, di_str_drive
-    mov  bl, 0x07
-    call term_puts
-    movzx eax, byte [bd_drive]
-    call term_print_hex_byte
-    call term_newline
-
-    ; show fsd_ready
-    mov  esi, di_str_fsd
-    mov  bl, 0x07
-    call term_puts
-    movzx eax, byte [fsd_ready]
-    call term_print_hex_byte
-    call term_newline
-
-    ; ALWAYS dump first 8 bytes of 0x40000 (what stage2 loaded)
-    mov  esi, di_str_ram40
-    mov  bl, 0x0E
-    call term_puts
-    mov  ecx, 8
-    mov  esi, 0x80000
-.ram40loop:
-    movzx eax, byte [esi]
-    call term_print_hex_byte
-    push esi
-    mov  esi, di_str_space
-    mov  bl, 0x07
-    call term_puts
-    pop  esi
-    inc  esi
-    loop .ram40loop
-    call term_newline
-
-    ; also show byte at 0x40000+20 (drive number stored by stage2)
-    mov  esi, di_str_drv20
-    mov  bl, 0x07
-    call term_puts
-    movzx eax, byte [0x80014]
-    call term_print_hex_byte
-    call term_newline
-
-    ; check magic directly at 0x40000
-    cmp  dword [0x80000], 0x44464C43
-    jne  .bad_magic
-    mov  esi, di_str_magic_ok
-    mov  bl, 0x0A
-    call term_puts
-    call term_newline
-    jmp  .done
-.bad_magic:
-    mov  esi, di_str_magic_bad
-    mov  bl, 0x0C
-    call term_puts
-    call term_newline
-.done:
-    popa
-    ret
-
-; - term_print_hex_byte / word helpers -
-term_print_hex_byte:
-    push eax
-    push ebx
-    push esi
-    mov  esi, di_hexbuf
-    mov  bl, al
-    shr  al, 4
-    call .nibble
-    mov  al, bl
-    and  al, 0x0F
-    call .nibble
-    mov  byte [esi], 0
-    mov  esi, di_hexbuf
-    mov  bl, 0x0E
-    call term_puts
-    pop  esi
-    pop  ebx
-    pop  eax
-    ret
-.nibble:
-    cmp  al, 9
-    jle  .dec
-    add  al, 'A' - 10
-    jmp  .store
-.dec:
-    add  al, '0'
-.store:
-    mov  [esi], al
-    inc  esi
-    ret
-
-term_print_hex_word:
-    push eax
-    push eax
-    shr  eax, 8
-    call term_print_hex_byte
-    pop  eax
-    call term_print_hex_byte
-    pop  eax
-    ret
-
-di_base:    dw 0
-di_drv:     db 0
-di_status:  db 0
-di_lbamid:  db 0
-di_lbahi:   db 0
-di_hexbuf:  times 8 db 0
-di_str_pitch:    db 'vbe_pitch=', 0
-di_str_ready:    db 'bd_ready=', 0
-di_str_drive:    db 'bd_drive=', 0
-di_str_fsd:      db 'fsd_ready=', 0
-di_str_ram40:    db '0x80000: ', 0
-di_str_drv20:    db 'drv@+14h=', 0
-di_str_sec0:     db 'sec0: ', 0
-di_str_space:    db ' ', 0
-di_str_magic_ok:  db 'Magic: CLFD OK!', 0
-di_str_magic_bad: db 'Magic: BAD', 0
-di_str_no_drive:  db 'No drive detected', 0
-di_sec0buf:      times 512 db 0
 
 ; -
 ; pm_cmd_helpwin ,! open About/Help window

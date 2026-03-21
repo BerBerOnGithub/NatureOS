@@ -30,19 +30,6 @@ pm_cmd_help:
     ret
 
 ; -
-; pm_cmd_ver
-; -
-pm_cmd_ver:
-    push esi
-    push ebx
-    mov  esi, pm_str_ver_text
-    mov  bl, 0x0B
-    call pm_puts
-    pop  ebx
-    pop  esi
-    ret
-
-; -
 ; pm_cmd_clear
 ; -
 pm_cmd_clear:

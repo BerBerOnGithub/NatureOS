@@ -494,65 +494,17 @@ cmd_pm:
     push si
 
     call nl
-    mov  si, str_pm_warn1
-    mov  bl, ATTR_RED
-    call puts_c
-    mov  si, str_pm_warn2
-    mov  bl, ATTR_YELLOW
-    call puts_c
-    mov  si, str_pm_prompt
-    mov  bl, ATTR_BRIGHT
-    call puts_c
-
-    xor  ah, ah
-    int  0x16
-    mov  bl, ATTR_BRIGHT
-    call putc_color
-    call nl
-
-    cmp  al, 'y'
-    je   .pm_go
-    cmp  al, 'Y'
-    je   .pm_go
-
-    mov  si, str_pm_abort
-    mov  bl, ATTR_GREEN
-    call puts_c
-    call nl
-    pop  si
-    pop  bx
-    pop  ax
-    jmp  shell_exec.done
-
-.pm_go:
-    call nl
     mov  si, str_pm_switching
-    mov  bl, ATTR_YELLOW
+    mov  bl, ATTR_CYAN
     call puts_c
+    call nl
 
-    ; Shut down real-mode drivers before handing off to PM
     call drv_rm_shutdown
-
-    mov  ah, 0x86
-    mov  cx, 0x0007
-    mov  dx, 0xA120
-    int  0x15
-
-    in   al, 0x92
-    or   al, 0x02
-    and  al, 0xFE
-    out  0x92, al
-
-    cli
+    call vbe_init            ; must happen in real mode before PM switch
     pop  si
     pop  bx
     pop  ax
-    mov  [rm_sp_save], sp
-    lgdt [gdt_descriptor]
-    mov  eax, cr0
-    or   eax, 1
-    mov  cr0, eax
-    jmp  0x08:pm_entry
+    call boot_to_pm          ; does A20, GDT, CR0, far jump - does not return
 
 ; -
 ; cmd_probe - 16-bit mode verifier

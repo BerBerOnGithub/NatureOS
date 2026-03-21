@@ -250,9 +250,9 @@ icons_click:
     jmp  .hit
 .do_files:
     mov  al,  WM_FILES
-    mov  ebx, 430
+    mov  ebx, 420
     mov  ecx, 50
-    mov  edx, 180
+    mov  edx, 210
     mov  esi, 200
     call wm_open
     jc   .hit
