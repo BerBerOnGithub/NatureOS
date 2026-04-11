@@ -46,6 +46,7 @@ WM_TERM       equ 0
 WM_CLOCK      equ 1
 WM_FILES      equ 2
 WM_HELP       equ 3
+WM_BROWSER    equ 4
 
 ; colours
 WM_C_DESK     equ 0x01      ; dark blue desktop
@@ -539,6 +540,8 @@ wm_draw_all:
     je   .p2files
     cmp  eax, WM_HELP
     je   .p2help
+    cmp  eax, WM_BROWSER
+    je   .p2browser
     jmp  .p2next
 .p2clock:
     call wm_draw_clock
@@ -548,6 +551,9 @@ wm_draw_all:
     jmp  .p2next
 .p2help:
     call wm_draw_help
+    jmp  .p2next
+.p2browser:
+    call browser_draw
 .p2next:
     inc  dword [wm_i]
     jmp  .p2loop
@@ -616,7 +622,12 @@ wm_open:
     mov  dword [edi+20], wm_s_files
     jmp  .title_ok
 .t3:
+    cmp  eax, WM_HELP
+    jne  .t4
     mov  dword [edi+20], wm_s_help
+    jmp  .title_ok
+.t4:
+    mov  dword [edi+20], wm_s_browser
 .title_ok:
 
     ; clear focus on all other windows
@@ -961,11 +972,14 @@ wm_on_click:
     ; client click " check for button hit in WM_CLOCK window
     cmp  edx, 3
     jne  .done
-    imul edi, ecx, WM_STRIDE
-    add  edi, wm_table
     cmp  byte [edi+16], WM_CLOCK
-    jne  .done
+    jne  .c1
     call wm_clock_click
+    jmp  .done
+.c1:
+    cmp  byte [edi+16], WM_BROWSER
+    jne  .done
+    call browser_click
     jmp  .done
 
 .do_close:
@@ -2285,6 +2299,7 @@ wm_s_term:       db 'Terminal', 0
 wm_s_clock:      db 'Stopwatch', 0
 wm_s_files:      db 'Files', 0
 wm_s_help:       db 'About NatureOS', 0
+wm_s_browser:    db 'Simple Browser', 0
 
 ; Help window content
 wm_s_help_title: db 'NatureOS  Build 2.0.0', 0

@@ -29,6 +29,7 @@ pm_entry:
 
     ; initialise window manager (draws desktop + taskbar)
     call wm_init
+    call browser_init
 
     ; load wallpaper first ,! populates WP_REMAP used by icons + cursor
     call wallpaper_load
@@ -98,6 +99,7 @@ pm_entry:
     ; refresh live window content (clock ticks, etc.)
     call wm_update_contents
     call term_tick
+    call browser_tick
     cmp  byte [scr_pending], 1
     jne  .no_scr
 .no_scr:
@@ -253,6 +255,11 @@ pm_exec:
     je   .dns
 
     mov  esi, pm_input_buf
+    mov  edi, pm_str_pfx_tcpget
+    call pm_startswith
+    je   .tcpget
+
+    mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_ls
     call pm_strcmp
     je   .ls
@@ -271,6 +278,16 @@ pm_exec:
     mov  edi, pm_str_pfx_hexdump
     call pm_startswith
     je   .hexdump
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_bioscall
+    call pm_strcmp
+    je   .bioscall
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_browser
+    call pm_strcmp
+    je   .browser
 
     ; unknown
     mov  esi, pm_str_unknown
@@ -314,6 +331,8 @@ pm_exec:
     jmp  .done
 .dns:       call cmd_dns
     jmp  .done
+.tcpget:    call cmd_tcpget
+    jmp  .done
 .ls:        call pm_cmd_ls
     jmp  .done
 .cat:       call pm_cmd_cat
@@ -321,6 +340,10 @@ pm_exec:
 .rm:        call pm_cmd_rm
     jmp  .done
 .hexdump:   call pm_cmd_hexdump
+    jmp  .done
+.bioscall:  call pm_cmd_bioscall
+    jmp  .done
+.browser:   call pm_cmd_browser
     jmp  .done
 .exit:  call pm_cmd_exit       ; does not return to here
 
@@ -566,6 +589,7 @@ pm_cmd_files:
 %include "pm/pm_keyboard.asm"
 %include "pm/pm_string.asm"
 %include "pm/pm_commands.asm"
+%include "pm/browser.asm"
 %include "pm/pm_drivers.asm"
 %include "pm/pm_data.asm"
 %include "pm/mouse.asm"

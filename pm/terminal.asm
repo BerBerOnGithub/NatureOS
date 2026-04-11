@@ -197,6 +197,9 @@ term_redraw:
 ; term_tick " non-blocking key handler
 ; -
 term_tick:
+    ; check if terminal is focused (it's always window 0 in this simplified OS)
+    cmp  byte [wm_table + 18], 1
+    jne  .done
     ; non-blocking: check keyboard buffer has data AND it's not mouse data
     in   al, 0x64
     test al, 0x01           ; any data at all?

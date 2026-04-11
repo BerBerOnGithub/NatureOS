@@ -69,22 +69,61 @@ kernel_main:
 ; -
 ; boot_to_pm
 ; Switches to 32-bit protected mode unconditionally.
+;
+; A20 is enabled via three methods for maximum hardware compatibility:
+;   1. BIOS INT 15h AX=2401h  (works on most modern BIOSes)
+;   2. Keyboard controller     (works on old AT-compatible hardware)
+;   3. Fast A20 port 0x92     (works on most PC/AT clones)
+;
+; The original code used INT 15h AH=86h (BIOS Wait / delay) which does
+; nothing at all for A20 -- fixed here.
 ; -
 boot_to_pm:
-    ; Enable A20 line
-    mov  ah, 0x86
-    mov  cx, 0x0007
-    mov  dx, 0xA120
+    ; ---- Method 1: BIOS INT 15h AX=2401h (Enable A20) ----
+    mov  ax, 0x2401
     int  0x15
+    ; ignore carry -- not all BIOSes support this, fall through to methods 2+3
 
+    ; ---- Method 2: Keyboard controller A20 gate ----
+    call .kbc_flush
+    mov  al, 0xAD           ; disable keyboard interface
+    out  0x64, al
+    call .kbc_flush
+
+    mov  al, 0xD0           ; read output port command
+    out  0x64, al
+    call .kbc_read_ready
+    in   al, 0x60           ; read current output port value
+    push ax                 ; save it
+
+    call .kbc_flush
+    mov  al, 0xD1           ; write output port command
+    out  0x64, al
+    call .kbc_flush
+    pop  ax
+    or   al, 0x02           ; set A20 bit (bit 1)
+    out  0x60, al           ; write new value
+    call .kbc_flush
+
+    mov  al, 0xAE           ; re-enable keyboard interface
+    out  0x64, al
+    call .kbc_flush
+
+    ; ---- Method 3: Fast A20 via port 0x92 ----
     in   al, 0x92
-    or   al, 0x02
-    and  al, 0xFE
+    or   al, 0x02           ; set A20 enable bit
+    and  al, 0xFE           ; CLEAR bit 0 (system reset) -- do NOT trigger reset
     out  0x92, al
+
+    ; ---- Short delay to let A20 propagate ----
+    ; Some chipsets need a few microseconds
+    mov  cx, 0x100
+.a20_delay:
+    loop .a20_delay
 
     cli
 
-    ; Save real-mode stack pointer so pm_exit can restore it
+    ; Save real-mode stack pointer so mode_switch.asm can restore it
     mov  [rm_sp_save], sp
 
     lgdt [gdt_descriptor]
@@ -94,6 +133,18 @@ boot_to_pm:
     mov  cr0, eax
 
     jmp  0x08:pm_entry      ; far jump flushes prefetch, loads CS=0x08
+
+; ---- KBC helper routines (local to boot_to_pm) ----
+.kbc_flush:                 ; wait for KBC input buffer empty (bit 1 of status)
+    in   al, 0x64
+    test al, 0x02
+    jnz  .kbc_flush
+    ret
+.kbc_read_ready:            ; wait for KBC output buffer full (bit 0 of status)
+    in   al, 0x64
+    test al, 0x01
+    jz   .kbc_read_ready
+    ret
 
 ; -
 ; Syscall trampoline - must land at offset 0x100 from ORG 0x8000 = 0x8100
@@ -112,6 +163,7 @@ syscall_entry:
 %include "core/utils.asm"
 %include "core/vbe.asm"
 %include "core/syscall.asm"
+%include "core/mode_switch.asm"
 %include "drivers/rm_drivers.asm"
 %include "shell/shell.asm"
 %include "commands/cmd_basic.asm"

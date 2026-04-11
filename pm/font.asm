@@ -30,12 +30,27 @@
 ; In: AL=char, EBX=x, ECX=y, DL=fg, DH=bg (0xFF=transparent)
 ; -
 fb_draw_char:
+    ; bounds check
+    cmp   ebx, 0
+    jl    .ret
+    cmp   ebx, 632           ; 640 - 8
+    jg    .ret
+    cmp   ecx, 0
+    jl    .ret
+    cmp   ecx, 472           ; 480 - 8
+    jg    .ret
+    
     push eax
     push ebx
     push ecx
     push edx
     push esi
     push edi
+    jmp   .start
+.ret:
+    ret
+
+.start:
 
     ; compute glyph pointer: font_data + char*8
     movzx eax, al

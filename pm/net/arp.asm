@@ -20,6 +20,11 @@
 ;   arp_send_request  EDI=target_ip
 ;   arp_process   ESI=payload, ECX=len  (called by IP layer on EtherType 0x0806)
 ;   cmd_arp       shell: show ARP cache
+;
+; Fixes applied:
+;   [FIX4] pm_parse_ip: EBX was not zeroed before the octet accumulation loop.
+;          The first 'shl ebx, 8' would shift in whatever garbage was in EBX,
+;          corrupting all parsed IPs. Added 'xor ebx, ebx' after 'xor eax, eax'.
 ; ===========================================================================
 
 [BITS 32]
@@ -453,6 +458,9 @@ pm_print_ip:
 ; pm_parse_ip - parse dotted-quad at ESI into EAX (host byte order)
 ; "10.0.2.2" -> EAX = 0x0A000202
 ; ESI advanced past the IP string
+;
+; [FIX4] EBX was never zeroed before the loop, so the first 'shl ebx, 8'
+; shifted in garbage from the caller's EBX, corrupting every parsed IP.
 ; -
 pm_parse_ip:
     push ebx
@@ -460,6 +468,7 @@ pm_parse_ip:
     push edx
 
     xor  eax, eax
+    xor  ebx, ebx            ; [FIX4] must zero accumulator before first shl
     mov  ecx, 4              ; 4 octets
 
 .octet:

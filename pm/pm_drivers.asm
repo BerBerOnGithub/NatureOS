@@ -289,3 +289,4 @@ pm_str_drv_unloaded: db 'UNLOADED |', 13, 10, 0
 %include "pm/net/ip.asm"
 %include "pm/net/icmp.asm"
 %include "pm/net/udp.asm"
+%include "pm/net/tcp.asm"

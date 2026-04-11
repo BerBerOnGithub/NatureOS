@@ -1031,4 +1031,92 @@ ls_str_b:        db ' B', 0
 cat_str_notfound: db 'File not found', 13, 10, 0
 rm_str_ok:        db 'File deleted.', 13, 10, 0
 rm_str_notfound:  db 'File not found.', 13, 10, 0
-rm_str_nodisk:    db 'No data disk.', 13, 10, 0
+rm_str_nodisk:    db 'No data disk.', 13, 10, 0; -
+; pm_cmd_bioscall - demo of the 16-bit to 32-bit bridge
+; Calls BIOS INT 1Ah (AH=04h) to read RTC date.
+; -
+pm_cmd_bioscall:
+    pusha
+    call pm_newline
+    mov  esi, bioscall_str_starting
+    mov  bl, 0x0E ; yellow
+    call pm_puts
+
+    ; Call INT 12h (Get Memory Size)
+    mov  edi, RM_REGS_ADDR
+    mov  ecx, 8
+    xor  eax, eax
+    rep  stosd
+    
+    mov  al, 0x12
+    call pm_bios_call
+    
+    ; Result in AX
+    mov  eax, [RM_REGS_ADDR + 0]
+    mov  [bioscall_tmp_ecx], eax
+
+    mov  esi, bioscall_str_ok
+    mov  bl, 0x0A ; green
+    call pm_puts
+
+    ; Formatted result
+    mov  esi, bioscall_str_mem_lbl
+    mov  bl, 0x0B
+    call pm_puts
+    mov  eax, [bioscall_tmp_ecx]
+    and  eax, 0xFFFF
+    call pm_print_hex16
+    mov  esi, bioscall_str_kb_hex
+    call pm_puts
+    call pm_newline
+
+    jmp  .done
+
+.err:
+    mov  esi, bioscall_str_err
+    mov  bl, 0x0C ; red
+    call pm_puts
+    call pm_newline
+
+.done:
+    popa
+    ret
+
+.print_bcd:
+    push eax
+    push ebx
+    mov  bl, al
+    shr  al, 4
+    and  al, 0x0F
+    add  al, '0'
+    call pm_putc
+    mov  al, bl
+    and  al, 0x0F
+    add  al, '0'
+    call pm_putc
+    pop  ebx
+    pop  eax
+    ret
+
+bioscall_str_starting: db ' [BRIDGE] Querying BIOS for Memory Size (INT 12h)...', 13, 10, 0
+bioscall_str_ok:       db ' [OK] BIOS sequence complete.', 13, 10, 0
+bioscall_str_mem_lbl:  db ' [OK] Base Memory Size (Hex): 0x', 0
+bioscall_str_kb_hex:   db ' KB', 0
+bioscall_str_err:      db ' [ERR] BIOS call failed.', 0
+bioscall_tmp_ecx:      dd 0
+bioscall_tmp_edx:      dd 0
+
+; ===========================================================================
+; pm_cmd_browser - Open the simple web browser
+; ===========================================================================
+pm_cmd_browser:
+    pusha
+    mov  al,  WM_BROWSER
+    mov  ebx, 50            ; x
+    mov  ecx, 50            ; y
+    mov  edx, 400           ; w
+    mov  esi, 300           ; h
+    call wm_open
+    popa
+    ret
+

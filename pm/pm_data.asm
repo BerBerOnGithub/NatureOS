@@ -93,10 +93,13 @@ pm_str_sw_reset:     db 'reset', 0
 pm_str_timer_usage:  db 'Usage: timer MM:SS', 0
 pm_str_cmd_savescr:  db 'savescr', 0
 pm_str_pfx_dns:      db 'dns ', 0
+pm_str_pfx_tcpget:   db 'tcpget ', 0
 pm_str_cmd_ls:       db 'ls', 0
 pm_str_pfx_cat:      db 'cat ', 0
 pm_str_pfx_rm:       db 'rm ', 0
 pm_str_pfx_hexdump:  db 'hexdump ', 0
+pm_str_cmd_bioscall: db 'bioscall', 0
+pm_str_cmd_browser:  db 'browser', 0
 
 ; Window manager strings
 pm_str_wm_full:      db 'Max windows open (close one first).', 0
@@ -132,6 +135,7 @@ pm_str_help_text:
     db ' | arping <ip>          | send ARP request           |', 13, 10
     db ' | ping <ip>            | ICMP echo (4 packets)      |', 13, 10
     db ' | dns <hostname>       | resolve hostname via DNS   |', 13, 10
+    db ' | tcpget <ip> <p> <path>| HTTP GET via TCP           |', 13, 10
     db ' | stopwatch            | stopwatch window           |', 13, 10
     db ' | timer MM:SS          | countdown timer            |', 13, 10
     db ' | term / files         | open window                |', 13, 10

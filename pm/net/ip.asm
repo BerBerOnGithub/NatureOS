@@ -56,7 +56,8 @@ ip_checksum:
     test ecx, ecx
     jz   .fold
     movzx ebx, byte [esi]    ; odd trailing byte
-    shl  ebx, 8
+    ; To match the 'mov bx, [esi]' (LE) loop, an even-indexed odd byte
+    ; should be added in the low position.
     add  eax, ebx
 
 .fold:

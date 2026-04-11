@@ -242,6 +242,8 @@ Every large buffer has a fixed address. **Do not place new buffers without check
 | `0x300000 - 0x34AFFF` | ~308 KB | SCR_BUF (screenshot BMP build area)        |
 | `0x500000 - 0x54AFFF` | 300 KB  | GFX_SHADOW (framebuffer shadow buffer)     |
 | `0x600000 - 0x64AFFF` | 300 KB  | SCR_CAPTURE (PrtSc snapshot)               |
+| `0x650000 - 0x6507FF` | 2 KB    | TCP_TX_BUF (outbound segment staging)      |
+| `0x650800 - 0x6527FF` | 8 KB    | TCP_RX_BUF (inbound payload reassembly)    |
 
 
 ## How It Works

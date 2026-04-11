@@ -40,7 +40,12 @@ echo  OK  boot.bin [512 bytes]
 echo [2/6] Assembling stage 2...
 "%NASM%" -f bin -o build\stage2.bin stage2.asm
 if errorlevel 1 ( echo FAILED: stage2.asm & exit /b 1 )
-for %%F in (build\stage2.bin) do echo  OK  stage2.bin [%%~zF bytes]
+REM stage2 sits in 512-LBA 1-3 (3 sectors = 1536 bytes max, before kernel at LBA 4)
+for %%F in (build\stage2.bin) do set S2=%%~zF
+echo  OK  stage2.bin [%S2% bytes]
+REM Check stage2 fits in 3 sectors (1536 bytes)
+powershell -NoProfile -Command "if ((Get-Item 'build\stage2.bin').Length -gt 1536) { Write-Host 'ERROR: stage2.bin exceeds 1536 bytes - will overwrite kernel LBA 4!'; exit 1 }"
+if errorlevel 1 ( echo FAILED: stage2 too large & exit /b 1 )
 
 echo [3/6] Assembling kernel...
 "%NASM%" -f bin -o build\kernel.bin kernel.asm
@@ -58,9 +63,9 @@ if errorlevel 1 ( echo FAILED: mkdata.py & exit /b 1 )
 echo [5/6] Building flat binary image...
 REM Layout aligned to 2048-byte CD sectors (4 x 512-byte sectors):
 REM   512-sector 0:   boot.bin
-REM   512-sector 1:   stage2.bin
-REM   512-sector 4:   kernel.bin  (2048-LBA 1)
-REM   512-sector 204: fs.bin      (2048-LBA 51)
+REM   512-sector 1:   stage2.bin   (max 3 sectors = 1536 bytes)
+REM   512-sector 4:   kernel.bin   (2048-LBA 1)
+REM   512-sector 204: fs.bin       (2048-LBA 51)
 set KERNEL_SECTOR=4
 set FS_SECTOR=204
 set FS_SECTORS=1600
@@ -95,6 +100,12 @@ echo.
 echo ================================
 echo   claudeos.iso built!
 echo ================================
+echo.
+echo   Boot paths supported:
+echo     CD/DVD  -^> El Torito no-emulation
+echo     USB     -^> Hybrid MBR (Rufus DD mode / Etcher / dd)
+echo     CSM     -^> Both paths work via BIOS INT 13h
+echo.
 
 if /i "%~1"=="run" goto :run
 exit /b 0
