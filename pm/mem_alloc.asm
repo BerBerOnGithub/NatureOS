@@ -7,8 +7,8 @@
 ;   - Collision detection to prevent memory conflicts between functions
 ;
 ; Memory Layout:
-;   HEAP_START  = 0x100000 (1MB) - start of dynamic memory
-;   HEAP_END    = 0x200000 (2MB) - end of heap
+;   HEAP_START  = 0x600000 (6MB) - start of dynamic memory
+;   HEAP_END    = 0x700000 (7MB) - end of heap
 ;   BLOCK_SIZE   = 32        - minimum allocation unit
 ;
 ; Usage:
@@ -27,8 +27,8 @@
 ; -
 ; Constants
 ; -
-HEAP_START        equ 0x100000
-HEAP_END          equ 0x200000
+HEAP_START        equ 0x600000
+HEAP_END          equ 0x700000
 HEAP_SIZE         equ (HEAP_END - HEAP_START)
 BLOCK_SIZE        equ 32
 MAX_ALLOCS        equ 256
@@ -68,6 +68,8 @@ mem_init:
 
     mov  esi, dbg_init_msg
     call dbg_print
+    mov  ebx, HEAP_START
+    call dbg_print_hex
 
     pop  edi
     pop  ecx
