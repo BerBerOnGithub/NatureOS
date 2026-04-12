@@ -99,6 +99,7 @@ pm_str_pfx_cat:      db 'cat ', 0
 pm_str_pfx_rm:       db 'rm ', 0
 pm_str_pfx_hexdump:  db 'hexdump ', 0
 pm_str_cmd_bioscall: db 'bioscall', 0
+pm_str_cmd_sysinfo:  db 'sysinfo', 0
 pm_str_cmd_browser:  db 'browser', 0
 
 ; Window manager strings
@@ -144,6 +145,7 @@ pm_str_help_text:
     db ' | rm <name>            | delete file                |', 13, 10
     db ' | hexdump <name>       | hex dump of a file         |', 13, 10
     db ' | savescr              | save screenshot to disk    |', 13, 10
+    db ' | sysinfo              | show system information    |', 13, 10
     db ' | exit                 | return to real mode        |', 13, 10
     db ' +----------------------+----------------------------+', 13, 10, 10, 0
 

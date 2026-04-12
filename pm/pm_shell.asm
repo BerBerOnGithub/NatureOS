@@ -288,6 +288,11 @@ pm_exec:
     je   .bioscall
 
     mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_sysinfo
+    call pm_strcmp
+    je   .sysinfo
+
+    mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_browser
     call pm_strcmp
     je   .browser
@@ -345,6 +350,8 @@ pm_exec:
 .hexdump:   call pm_cmd_hexdump
     jmp  .done
 .bioscall:  call pm_cmd_bioscall
+    jmp  .done
+.sysinfo:   call pm_cmd_sysinfo
     jmp  .done
 .browser:   call pm_cmd_browser
     jmp  .done
@@ -592,6 +599,7 @@ pm_cmd_files:
 %include "pm/pm_keyboard.asm"
 %include "pm/pm_string.asm"
 %include "pm/pm_commands.asm"
+%include "pm/sysinfo.asm"
 %include "pm/browser.asm"
 %include "pm/pm_drivers.asm"
 %include "pm/pm_data.asm"
