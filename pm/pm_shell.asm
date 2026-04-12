@@ -50,8 +50,8 @@ pm_entry:
 
     call wm_draw_all
 
-    call term_init
     call mouse_init
+    call term_init
 
 .loop:
     call mouse_poll
@@ -95,6 +95,10 @@ pm_entry:
 .btn_done:
     mov  al, [mouse_btn]
     mov  [pm_prev_btn], al
+
+    ; Small I/O delay between mouse and keyboard polling
+    jmp  $+2
+    jmp  $+2
 
     ; refresh live window content (clock ticks, etc.)
     call wm_update_contents
