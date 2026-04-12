@@ -28,19 +28,28 @@ mouse_init:
     mov  byte  [mouse_btn],     0
     mov  byte  [mouse_pkt_idx], 0
 
+.flush_loop:
+    in   al, PORT_STATUS
+    test al, 0x01
+    jz   .flush_done
+    in   al, PORT_DATA
+    jmp  .flush_loop
+.flush_done:
+
     ; enable aux port
     call .kww
     mov  al, 0xA8
     out  PORT_CMD, al
 
-    ; read controller command byte, set aux-IRQ enable, clear aux-clock-disable
+    ; read controller command byte, CLEAR aux-IRQ enable (polling mode), clear aux-clock-disable
     call .kww
     mov  al, 0x20
     out  PORT_CMD, al
     call .kwr
     in   al, PORT_DATA
-    or   al, 0x02
-    and  al, 0xDF
+    and  al, 0xFD              ; CLEAR bit 1 (IRQ12 enable) - polling mode!
+    and  al, 0xDF              ; clear bit 5 (aux-clock-disable)
+    and  al, 0xFE              ; clear bit 0 (IRQ1 enable) - polling mode for keyboard too!
     push eax
     call .kww
     mov  al, 0x60
@@ -48,6 +57,9 @@ mouse_init:
     call .kww
     pop  eax
     out  PORT_DATA, al
+
+    jmp  $+2
+    jmp  $+2
 
     ; send 0xF4 (enable data reporting) to mouse
     call .kww
