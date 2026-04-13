@@ -143,6 +143,9 @@ browser_draw_content:
     test al, al
     jz   .done
     
+    cmp  al, '<'            ; HTML tag start?
+    je   .skip_tag
+    
     cmp  al, 13             ; CR
     je   .cr
     cmp  al, 10             ; LF
@@ -163,6 +166,15 @@ browser_draw_content:
     call fb_draw_char
     
     add  dword [br_cx], 8
+    jmp  .loop
+
+.skip_tag:
+    mov  al, [esi]
+    inc  esi
+    test al, al
+    jz   .done
+    cmp  al, '>'
+    jne  .skip_tag
     jmp  .loop
 
 .cr:
@@ -206,6 +218,9 @@ br_w:  dd 0
 br_h:  dd 0
 br_cx: dd 0
 br_cy: dd 0
+br_hdr_state: db 0
+br_header_done: db 0
+browser_tmp_host: times 64 db 0
 
 ; - browser_tick -
 browser_tick:
@@ -334,40 +349,56 @@ browser_fetch:
     call .copy_str
     call wm_draw_all
     
-    ; 2. Parse URL (simple IP support for now)
-    ; We'll reuse the tcpget logic. 
-    ; For now, let's hardcode a test fetch if URL is "test"
-    
-    ; Actual fetch logic (simplified version of cmd_tcpget)
-    ; In a real browser we'd parse "http://ip:port/path"
-    ; For "simple", we'll just assume browser_url contains "ip port path"
-    
+    ; 2. Parse URL (HOSTNAME PORT PATH)
     mov  esi, browser_url
+    ; Extract hostname/IP part (until space or null)
+    mov  edi, browser_tmp_host
+    mov  ecx, 0
+.copy_host:
+    lodsb
+    cmp  al, ' '
+    je   .host_done
+    cmp  al, 0
+    je   .host_done
+    stosb
+    inc  ecx
+    cmp  ecx, 63
+    jl   .copy_host
+.host_done:
+    mov  byte [edi], 0
+    
+    ; Try parsing browser_tmp_host as IP
+    push esi
+    mov  esi, browser_tmp_host
     call pm_parse_ip
     test eax, eax
-    jz   .err_url
+    jnz  .got_ip
+    
+    ; Try DNS
+    mov  esi, browser_tmp_host
+    call dns_resolve
+    pop  esi
+    jc   .err_url
+    jmp  .got_ip2
+    
+.got_ip:
+    pop  esi
+.got_ip2:
     mov  [tcpg_dst_ip], eax
     
-    ; skip to port
-.skip1:
-    lodsb
-    test al, al
-    jz   .err_url
-    cmp  al, ' '
-    jne  .skip1
+    ; Now ESI points to just after hostname in browser_url (at ' ' or 0)
+    cmp  byte [esi-1], 0
+    je   .err_url
     
     call pm_parse_uint
     test eax, eax
     jz   .err_url
     mov  [tcpg_dst_port], ax
     
-    ; skip to path
-.skip2:
+    ; Check for space then path
     lodsb
-    test al, al
-    jz   .err_url
     cmp  al, ' '
-    jne  .skip2
+    jne  .err_url
     mov  [tcpg_path_ptr], esi
     
     ; Connect
@@ -393,8 +424,15 @@ browser_fetch:
     
     mov  esi, tcpg_str_http10
     call .append_s
-    mov  esi, browser_s_hdr_host
+    
+    ; Host: <hostname>
+    mov  esi, browser_s_hdr_host_pre
     call .append_s
+    mov  esi, browser_tmp_host
+    call .append_s
+    mov  esi, browser_s_crlf
+    call .append_s
+    
     mov  esi, tcpg_str_connclose
     call .append_s
     mov  byte [edi], 0
@@ -412,11 +450,10 @@ browser_fetch:
     mov  ecx, 4096
     rep  stosd              ; clear 16KB
     
+    mov  byte [br_header_done], 0
+    mov  byte [br_hdr_state], 0
     mov  edi, browser_content
 .recv_loop:
-    ; Progress feedback: draw simple dot or status bit
-    ; (Could do more but let's keep it simple for now)
-    
     cmp  byte [tcp_state], TCP_STATE_ESTABLISHED
     je   .do_recv
     cmp  byte [tcp_state], TCP_STATE_CLOSE_WAIT
@@ -429,36 +466,66 @@ browser_fetch:
     mov  edi, tcpg_recv_buf
     call tcp_recv
     pop  edi
-    jc   .recv_done         ; error or timeout
+    jc   .recv_done
     test ecx, ecx
-    jz   .recv_done         ; EOF
+    jz   .recv_done
     
-    ; Safety check: don't overflow browser_content (16KB)
+    mov  esi, tcpg_recv_buf
+.process_packet:
+    lodsb
+    cmp  byte [br_header_done], 1
+    je   .copy_to_content
+    
+    ; State machine for \r\n\r\n
+    cmp  al, 13
+    jne  .not_r
+    cmp  byte [br_hdr_state], 0
+    je   .st1
+    cmp  byte [br_hdr_state], 2
+    je   .st3
+    mov  byte [br_hdr_state], 1
+    jmp  .next_b
+.st1: mov  byte [br_hdr_state], 1
+    jmp  .next_b
+.st3: mov  byte [br_hdr_state], 3
+    jmp  .next_b
+
+.not_r:
+    cmp  al, 10
+    jne  .not_n
+    cmp  byte [br_hdr_state], 1
+    je   .st2
+    cmp  byte [br_hdr_state], 3
+    je   .st4
+    mov  byte [br_hdr_state], 0
+    jmp  .next_b
+.st2: mov  byte [br_hdr_state], 2
+    jmp  .next_b
+.st4: mov  byte [br_header_done], 1
+    jmp  .next_b
+
+.not_n:
+    mov  byte [br_hdr_state], 0
+    jmp  .next_b
+
+.copy_to_content:
+    push eax
     mov  eax, edi
     sub  eax, browser_content
-    add  eax, ecx
     cmp  eax, 16000
-    jae  .recv_done         ; stop if near limit
+    pop  eax
+    jae  .recv_done
     
-    ; Copy from tcpg_recv_buf to browser_content
-    push ecx
-    mov  esi, tcpg_recv_buf
-.copy_data:
-    lodsb
-    ; Optional: strip non-printable or handle line endings here
     mov  [edi], al
     inc  edi
-    dec  ecx
-    jnz  .copy_data
-    pop  ecx
+
+.next_b:
+    loop .process_packet
     
-    ; [NEW] Brief progress update: redraw browser content while fetching
-    ; This helps show it's not "dead" even if it's blocking
-    mov  byte [edi], 0      ; null term for draw
+    mov  byte [edi], 0
     push edi
     call wm_draw_all
     pop  edi
-    
     jmp  .recv_loop
 
 .recv_done:
@@ -500,9 +567,10 @@ browser_fetch:
 browser_url:     times 256 db 0
 browser_content: times 16384 db 0
 browser_s_go:    db 'Go', 0
-browser_s_default_url: db '142.250.180.142 80 /', 0
-browser_s_hdr_host:    db 'Host: google.com', 13, 10, 0
-browser_s_welcome: db 'Welcome to NatureOS Browser!', 13, 10, 'Usage: IP PORT PATH (space-separated)', 0
+browser_s_default_url: db 'google.com 80 /', 0
+browser_s_hdr_host_pre: db 'Host: ', 0
+browser_s_crlf:         db 13, 10, 0
+browser_s_welcome: db 'Welcome to NatureOS Browser!', 13, 10, 'Usage: HOST PORT PATH (space-separated)', 0
 browser_s_fetching: db 'Fetching...', 0
 browser_s_err_url:  db 'Error: Invalid URL format.', 0
 browser_s_err_conn: db 'Error: Connection failed.', 0

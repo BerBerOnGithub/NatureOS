@@ -394,40 +394,22 @@ dns_parse_response:
     ret
 
 ; -
-; cmd_dns - resolve a hostname via DNS (QEMU SLIRP DNS at 10.0.2.3)
-; Usage: dns <hostname>
+; dns_resolve - resolve a hostname to IPv4 address via QEMU SLIRP DNS (10.0.2.3)
+;
+; In:  ESI = null-terminated hostname
+; Out: EAX = resolved IPv4 (host order)
+;      CF=0 ok, CF=1 error (timeout or parse fail)
 ; -
-cmd_dns:
-    push eax
+dns_resolve:
     push ebx
     push ecx
     push edx
     push esi
     push edi
 
-    ; parse hostname from input (skip "dns ")
-    mov  esi, pm_input_buf
-    add  esi, 4
-
-    ; check not empty
-    cmp  byte [esi], 0
-    je   .usage
-
     mov  [dns_hostname_ptr], esi
 
-    call pm_newline
-    mov  esi, pm_str_dns_query
-    mov  bl,  0x0B
-    call pm_puts
-    mov  esi, [dns_hostname_ptr]
-    mov  bl,  0x0F
-    call pm_puts
-    mov  esi, pm_str_dns_dots
-    mov  bl,  0x07
-    call pm_puts
-
     ; build DNS query packet
-    mov  esi, [dns_hostname_ptr]
     call dns_build_query     ; ECX = packet length, dns_pkt_buf populated
 
     ; send UDP to 10.0.2.3:53 from port 4096
@@ -492,6 +474,62 @@ cmd_dns:
     jc   .poll               ; not a valid response, keep waiting
 
     ; EAX = resolved IP (host order)
+    clc
+    jmp  .done
+
+.empty:
+    dec  dword [dns_poll_ctr]
+    jnz  .poll
+.send_fail:
+    stc
+
+.done:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    ret
+
+; -
+; cmd_dns - resolve a hostname via DNS (QEMU SLIRP DNS at 10.0.2.3)
+; Usage: dns <hostname>
+; -
+cmd_dns:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    ; parse hostname from input (skip "dns ")
+    mov  esi, pm_input_buf
+    add  esi, 4
+
+    ; check not empty
+    cmp  byte [esi], 0
+    je   .usage
+
+    mov  [dns_hostname_ptr], esi
+
+    call pm_newline
+    mov  esi, pm_str_dns_query
+    mov  bl,  0x0B
+    call pm_puts
+    mov  esi, [dns_hostname_ptr]
+    mov  bl,  0x0F
+    call pm_puts
+    mov  esi, pm_str_dns_dots
+    mov  bl,  0x07
+    call pm_puts
+
+    mov  esi, [dns_hostname_ptr]
+    call dns_resolve
+    jc   .fail
+
+    ; EAX = resolved IP (host order)
+    push eax
     mov  esi, pm_str_dns_result
     mov  bl,  0x0A
     call pm_puts
@@ -501,21 +539,13 @@ cmd_dns:
     mov  esi, pm_str_dns_arrow
     mov  bl,  0x07
     call pm_puts
+    pop  eax
     call pm_print_ip
     call pm_newline
     jmp  .done
 
-.empty:
-    dec  dword [dns_poll_ctr]
-    jnz  .poll
-
+.fail:
     mov  esi, pm_str_dns_timeout
-    mov  bl,  0x0C
-    call pm_puts
-    jmp  .done
-
-.send_fail:
-    mov  esi, pm_str_dns_send_fail
     mov  bl,  0x0C
     call pm_puts
     jmp  .done
