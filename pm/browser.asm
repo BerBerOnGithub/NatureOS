@@ -324,59 +324,325 @@ browser_click:
     popa
     ret
 
+; - browser_parse_url -
+; Parse "http://hostname:port/path" into components
+; In: ESI = URL string
+; Out: EAX = IP (resolved) or 0 on error
+;      AX = port, ESI = path pointer
+;      browser_hostname populated
+browser_parse_url:
+    push ebx
+    push ecx
+    push edx
+    push edi
+
+    ; Skip "http://" prefix
+    mov  edi, browser_hostname
+    xor  ecx, ecx
+.check_prefix:
+    mov  al, [esi + ecx]
+    mov  bl, [http_prefix + ecx]
+    test bl, bl
+    jz   .prefix_ok
+    cmp  al, bl
+    jne  .old_format
+    inc  ecx
+    jmp  .check_prefix
+
+.prefix_ok:
+    add  esi, ecx              ; skip "http://"
+    jmp  .parse_hostname
+
+.old_format:
+    ; Not a URL, might be old "IP PORT PATH" format
+    mov  esi, browser_url
+    call pm_parse_ip
+    test eax, eax
+    jz   .error
+    mov  [tcpg_dst_ip], eax
+
+    ; skip to port
+.skip1:
+    lodsb
+    test al, al
+    jz   .error
+    cmp  al, ' '
+    jne  .skip1
+
+    call pm_parse_uint
+    test eax, eax
+    jz   .error
+    mov  [tcpg_dst_port], ax
+
+    ; skip to path
+.skip2:
+    lodsb
+    test al, al
+    jz   .error
+    cmp  al, ' '
+    jne  .skip2
+    mov  [tcpg_path_ptr], esi
+
+    ; Return with EAX=IP already set
+    jmp  .done
+
+.parse_hostname:
+    ; Extract hostname until ':' or '/'
+    mov  edi, browser_hostname
+    xor  ebx, ebx                ; hostname length
+
+.host_loop:
+    mov  al, [esi]
+    test al, al
+    jz   .host_done
+    cmp  al, ':'
+    je   .host_done
+    cmp  al, '/'
+    je   .host_done
+    stosb
+    inc  ebx
+    inc  esi
+    cmp  ebx, 253
+    jl  .host_loop
+.host_done:
+    mov  byte [edi], 0           ; null-terminate hostname
+
+    ; Check for port
+    cmp  byte [esi], ':'
+    jne  .default_port
+    inc  esi                      ; skip ':'
+    call pm_parse_uint
+    test eax, eax
+    jz   .error
+    mov  [tcpg_dst_port], ax
+    jmp  .check_path
+
+.default_port:
+    mov  word [tcpg_dst_port], 80
+
+.check_path:
+    ; Check for path
+    cmp  byte [esi], '/'
+    je   .has_path
+    ; No path, use default
+    mov  esi, browser_s_def_path
+    jmp  .got_path
+
+.has_path:
+    ; Path already at ESI
+
+.got_path:
+    mov  [tcpg_path_ptr], esi
+
+    ; Resolve hostname via DNS
+    mov  esi, browser_hostname
+    call dns_resolve_hostname
+    jc   .error                  ; CF=1 means DNS failed
+
+    ; EAX = resolved IP
+    mov  [tcpg_dst_ip], eax
+    clc
+    jmp  .done
+
+.error:
+    xor  eax, eax
+    stc
+
+.done:
+    pop  edi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    ret
+
+; - dns_resolve_hostname -
+; Resolve hostname to IP using DNS
+; In: ESI = hostname (null-terminated)
+; Out: EAX = IP (host order), CF=0 success, CF=1 failed
+dns_resolve_hostname:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    mov  [dns_tmp_hostname], esi
+
+    ; Build DNS query
+    mov  esi, [dns_tmp_hostname]
+    call dns_build_query
+    test ecx, ecx
+    jz   .fail
+
+    ; Send to DNS server (10.0.2.3:53)
+    mov  eax, DNS_SERVER_IP
+    mov  bx,  DNS_SRC_PORT
+    mov  edx, ecx                ; save packet length
+    mov  cx,  DNS_PORT
+    mov  esi, dns_pkt_buf
+    call udp_send
+    jc   .fail
+
+    ; Poll for DNS response
+    mov  dword [dns_poll_ctr], 2000000
+.dns_poll:
+    call eth_recv
+    jc   .dns_empty
+
+    ; Skip ARP packets
+    cmp  dx, ETHERTYPE_ARP
+    jne  .dns_not_arp
+    call arp_process
+    jmp  .dns_poll
+.dns_not_arp:
+
+    ; Must be IPv4 UDP
+    cmp  dx, ETHERTYPE_IPV4
+    jne  .dns_poll
+    cmp  ecx, 20 + UDP_HDR_LEN
+    jl  .dns_poll
+    cmp  byte [esi], 0x45
+    jne  .dns_poll
+    cmp  byte [esi + 9], IP_PROTO_UDP
+    jne  .dns_poll
+
+    ; Check UDP port matches our source port
+    mov  ax, [esi + 20 + 2]      ; UDP dst port
+    xchg al, ah
+    cmp  ax, DNS_SRC_PORT
+    jne  .dns_poll
+
+    ; Get UDP payload length
+    mov  ax, [esi + 20 + 4]
+    xchg al, ah
+    movzx ecx, ax
+    sub  ecx, UDP_HDR_LEN
+    cmp  ecx, 12
+    jl  .dns_poll
+
+    ; Copy DNS payload to dns_pkt_buf
+    push esi
+    push ecx
+    push edi
+    add  esi, 20 + UDP_HDR_LEN
+    mov  edi, dns_pkt_buf
+    rep  movsb
+    pop  edi
+    pop  ecx
+    pop  esi
+
+    call dns_parse_response
+    jnc  .dns_success
+    jmp  .dns_poll
+
+.dns_empty:
+    dec  dword [dns_poll_ctr]
+    jnz  .dns_poll
+
+.fail:
+    stc
+    jmp  .done
+
+.dns_success:
+    clc
+
+.done:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    ret
+
+; - browser_strip_headers -
+; Strip HTTP headers from response, keeping only body
+; In: ESI = response buffer, EDI = destination buffer
+; Out: EDI updated to start of body
+browser_strip_headers:
+    push eax
+    push ecx
+    push esi
+
+.strip_loop:
+    movzx eax, byte [esi]
+    test al, al
+    jz   .not_found
+    cmp  eax, 0x0D              ; CR
+    jne  .check_lf1
+    inc  esi
+    movzx eax, byte [esi]
+    cmp  eax, 0x0A              ; LF
+    jne  .not_found
+    inc  esi
+    movzx eax, byte [esi]
+    cmp  eax, 0x0D              ; CR
+    jne  .not_found
+    inc  esi
+    movzx eax, byte [esi]
+    cmp  eax, 0x0A              ; LF
+    jne  .not_found
+    inc  esi
+    ; Found \r\n\r\n - ESI now points to body
+    jmp  .found
+.check_lf1:
+    cmp  eax, 0x0A              ; LF
+    jne  .next_char
+    inc  esi
+    movzx eax, byte [esi]
+    cmp  eax, 0x0A              ; LF
+    jne  .not_found
+    inc  esi
+    ; Found \n\n - ESI now points to body
+    jmp  .found
+.next_char:
+    inc  esi
+    jmp  .strip_loop
+
+.not_found:
+    ; No headers found, copy everything
+    mov  esi, browser_content
+    jmp  .copy_loop
+.found:
+    ; Copy body to destination
+.copy_loop:
+    movzx eax, byte [esi]
+    test al, al
+    jz   .done
+    stosb
+    inc  esi
+    jmp  .copy_loop
+
+.done:
+    mov  byte [edi], 0          ; null-terminate
+    pop  esi
+    pop  ecx
+    pop  eax
+    ret
+
 ; - browser_fetch -
 browser_fetch:
     pusha
-    
+
     ; 1. Set "Fetching..." message
     mov  edi, browser_content
     mov  esi, browser_s_fetching
     call .copy_str
     call wm_draw_all
-    
-    ; 2. Parse URL (simple IP support for now)
-    ; We'll reuse the tcpget logic. 
-    ; For now, let's hardcode a test fetch if URL is "test"
-    
-    ; Actual fetch logic (simplified version of cmd_tcpget)
-    ; In a real browser we'd parse "http://ip:port/path"
-    ; For "simple", we'll just assume browser_url contains "ip port path"
-    
+
+    ; 2. Parse URL
     mov  esi, browser_url
-    call pm_parse_ip
+    call browser_parse_url
     test eax, eax
     jz   .err_url
-    mov  [tcpg_dst_ip], eax
-    
-    ; skip to port
-.skip1:
-    lodsb
-    test al, al
-    jz   .err_url
-    cmp  al, ' '
-    jne  .skip1
-    
-    call pm_parse_uint
-    test eax, eax
-    jz   .err_url
-    mov  [tcpg_dst_port], ax
-    
-    ; skip to path
-.skip2:
-    lodsb
-    test al, al
-    jz   .err_url
-    cmp  al, ' '
-    jne  .skip2
-    mov  [tcpg_path_ptr], esi
-    
+    ; IP now in tcpg_dst_ip, port in tcpg_dst_port, path ptr set
+
     ; Connect
     mov  eax, [tcpg_dst_ip]
     movzx ecx, word [tcpg_dst_port]
     call tcp_connect
     jc   .err_conn
-    
-    ; Request
+
+    ; Request - build HTTP GET with dynamic Host header
     mov  edi, tcpg_req_buf
     mov  byte [edi+0], 'G'
     mov  byte [edi+1], 'E'
@@ -390,11 +656,20 @@ browser_fetch:
     test al, al
     jnz  .copy_p
     dec  edi                ; overwrite null with space
-    
+
     mov  esi, tcpg_str_http10
     call .append_s
-    mov  esi, browser_s_hdr_host
+
+    ; Host header
+    mov  esi, tcpg_str_host
     call .append_s
+    mov  esi, browser_hostname
+    call .append_s
+    mov  byte [edi], 13
+    inc  edi
+    mov  byte [edi], 10
+    inc  edi
+
     mov  esi, tcpg_str_connclose
     call .append_s
     mov  byte [edi], 0
@@ -462,8 +737,14 @@ browser_fetch:
     jmp  .recv_loop
 
 .recv_done:
-    mov  byte [edi], 0      ; Final null terminator
+    mov  byte [edi], 0      ; Final null terminator before stripping
     call tcp_close
+
+    ; Strip HTTP headers to show only body content
+    mov  esi, browser_content
+    mov  edi, browser_content
+    call browser_strip_headers
+
     jmp  .done
 
 .err_url:
