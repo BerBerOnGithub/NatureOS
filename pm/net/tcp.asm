@@ -1141,6 +1141,7 @@ tcpg_str_usage:
     db ' Example: tcpget 93.184.216.34 80 /', 13, 10
     db ' Tip: use "dns <host>" first to resolve the IP.', 13, 10, 0
 tcpg_str_http10:     db ' HTTP/1.0', 13, 10, 0
+tcpg_str_host:       db 'Host: ', 0
 tcpg_str_connclose:  db 'Connection: close', 13, 10, 13, 10, 0
 
 ; ===========================================================================
