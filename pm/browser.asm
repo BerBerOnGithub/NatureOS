@@ -150,6 +150,10 @@ browser_draw_content:
     mov  dword [br_line_h], 8
     mov  dword [br_done_flag], 0
 
+    ; save fcs_scale so we don't corrupt it for other callers
+    mov  eax, [fcs_scale]
+    mov  [br_save_scale], eax
+
 .loop:
     cmp  dword [br_done_flag], 0
     jne  .done
@@ -210,10 +214,11 @@ browser_draw_content:
     jmp  .loop
 
 .done:
+    ; restore fcs_scale for other callers
+    mov  eax, [br_save_scale]
+    mov  [fcs_scale], eax
     popa
     ret
-
-; - browser_render_char -
 ; Render character from br_char_buf at current cursor position.
 ; Uses current br_scale and br_bold for rendering.
 browser_render_char:
@@ -246,11 +251,22 @@ browser_render_char:
 .fg_set:
     mov  dh, 0x0F            ; white background
 
-    ; draw char scaled
+    ; draw char scaled - bounds check first (fb_draw_char_scaled has no bounds check)
     mov  al, [br_char_buf]
     mov  ebx, [br_cx]
     mov  ecx, [br_cy]
+    ; check x: cx + 8*scale must be < 640
+    mov  edx, ebx
+    add  edx, [br_cw]
+    cmp  edx, 640
+    ja   .skip_draw
+    ; check y: cy + 8*scale must be < 480
+    mov  edx, ecx
+    add  edx, [br_cw]
+    cmp  edx, 480
+    ja   .skip_draw
     call fb_draw_char_scaled
+.skip_draw:
 
     ; advance cursor
     mov  eax, [br_cw]
@@ -261,19 +277,25 @@ browser_render_char:
 
 ; - browser_newline -
 ; Reset CX to x0, advance CY by current line height.
-; Sets br_done_flag if past bottom.
+; Sets br_done_flag if past bottom clip or screen.
 browser_newline:
     push eax
     mov  eax, [br_x0]
     mov  [br_cx], eax
     mov  eax, [br_line_h]
     add  [br_cy], eax
-    ; check bottom clip
+    ; check bottom clip (content area)
     mov  eax, [br_cy]
     sub  eax, [br_y0]
     add  eax, [br_line_h]
     cmp  eax, [br_h]
+    ja   .nl_clip
+    ; also check hard screen boundary
+    mov  eax, [br_cy]
+    add  eax, [br_line_h]
+    cmp  eax, 480
     jbe  .nl_ok
+.nl_clip:
     mov  dword [br_done_flag], 1
 .nl_ok:
     pop  eax
@@ -289,10 +311,13 @@ browser_draw_hr:
     ; draw line: fb_fill_rect(x0, cy, w, 2, dark grey)
     mov  eax, [br_x0]
     mov  ebx, [br_cy]
+    cmp  ebx, 478
+    ja   .hr_skip
     mov  ecx, [br_w]
     mov  edx, 2
     mov  esi, 0x08           ; dark grey
     call fb_fill_rect
+.hr_skip:
     ; advance cy past line + spacing
     add  dword [br_cy], 6
     mov  eax, [br_x0]
@@ -854,6 +879,7 @@ br_done_flag: dd 0
 br_closing: dd 0
 br_save_esi: dd 0
 br_match_len: dd 0
+br_save_scale: dd 0
 br_tag_buf: times 16 db 0
 br_char_buf: db 0
 
