@@ -33,7 +33,7 @@ jobs:
         id: changelog
         run: |
           echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat .github/CHANGELOG.md >> $GITHUB_OUTPUT
+          cat .github/changelog.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
@@ -42,7 +42,7 @@ jobs:
           name: ${{ github.ref_type == 'tag' && github.ref_name || 'First release' }}
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
           body: |
-            # ClaudeOS ${{ github.ref_name }}
+            # Release ${{ github.ref_name }}
 
             ${{ steps.changelog.outputs.body }}
 
