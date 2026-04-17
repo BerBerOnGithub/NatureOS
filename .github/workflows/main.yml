@@ -53,13 +53,24 @@ jobs:
             `claudeos.iso` | Bootable ISO image
             `data.img` | Data disk image
 
-            ## Running with QEMU
+            ## Running with QEMU (every feature tested)
             ```
-            qemu-system-x86_64 \
-              -cdrom claudeos.iso \
-              -drive format=raw,file=data.img,if=ide,index=2 \
-              -boot d -m 32M -display sdl -no-reboot \
-              -cpu qemu64 -nic user,model=e1000
+            qemu-system-x86_64 ^
+            -cdrom claudeos.iso ^
+            -drive format=raw,file=data.img,if=ide,index=3 ^
+            -boot d ^
+            -m 128M ^
+            -cpu qemu64 ^
+            -smp 1 ^
+            -vga std ^
+            -rtc base=localtime ^
+            -audiodev id=snd,driver=dsound ^
+            -machine pcspk-audiodev=snd ^
+            -nic user,model=e1000 ^
+            -display sdl,window-close=on ^
+            -name "Operating System" ^
+            -serial stdio ^
+            -no-reboot
             ```
           files: |
             claudeos.iso
