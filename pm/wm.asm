@@ -12,7 +12,7 @@
 ;  [+16]  db  type   (WM_TERM / WM_CLOCK / WM_FILES)
 ;  [+17]  db  open   (1 = visible)
 ;  [+18]  db  focus  (1 = active / topmost)
-;  [+19]  db  pad
+;  [+19]  db  dirty  (1 = needs redraw)
 ;  [+20]  dd  title  (pointer to null-terminated string)
 ;  [+24] .. [+31]  reserved
 ;
@@ -75,6 +75,7 @@ wm_draw_desktop:
     pusha
     ; draw wallpaper (or solid fill fallback) " bottom layer
     call wallpaper_draw
+    call wm_draw_sysinfo
 
     ; - desktop watermark (bottom-right, right-aligned) -
     ; 'NatureOS' = 8 chars * 8px = 64px  -> x = 640 - 64 - 4 = 572
@@ -472,19 +473,53 @@ wm_hide_startmenu:
     popa
     ret
 
+; - wm_invalidate -
+; Mark window ECX as dirty (needs redraw next frame)
+wm_invalidate:
+    push edi
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    mov  byte [edi+19], 1
+    pop  edi
+    ret
+
+; - wm_invalidate_all -
+; Mark all open windows dirty
+wm_invalidate_all:
+    push eax
+    push edi
+    xor  eax, eax
+.ia_loop:
+    cmp  eax, WM_MAX_WINS
+    jge  .ia_done
+    imul edi, eax, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .ia_next
+    mov  byte [edi+19], 1
+.ia_next:
+    inc  eax
+    jmp  .ia_loop
+.ia_done:
+    pop  edi
+    pop  eax
+    ret
+
 ; - wm_draw_all -
-; Draw order: desktop +' terminal chrome+content +' all other windows +' taskbar
-; Draw order:
-;   Pass 1: all unfocused open windows (any type), back to front
-;   Pass 2: the focused window (any type) drawn last = always on top
-; Terminal gets term_redraw called right after wm_draw_one whenever it appears.
+; Full redraw - redraws desktop, marks all windows dirty, then flushes.
+; Use for major events: window open/close, focus change, drag release.
+; For incremental updates use wm_invalidate + let main loop handle it.
 wm_draw_all:
     pusha
     call cursor_erase
     call wm_draw_desktop
     call icons_draw
-
-    ; Pass 1: all unfocused windows
+    call wm_draw_taskbar_btns
+    cmp  byte [sm_open], 1
+    jne  .no_sm
+    call wm_draw_startmenu
+.no_sm:
+    ; draw all unfocused windows
     mov  dword [wm_i], 0
 .p1loop:
     mov  ecx, [wm_i]
@@ -492,29 +527,20 @@ wm_draw_all:
     jge  .p1done
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
-    cmp  byte [edi+17], 1       ; open?
+    cmp  byte [edi+17], 1
     jne  .p1next
-    cmp  byte [edi+18], 1       ; focused? skip for pass 2
+    cmp  byte [edi+18], 1
     je   .p1next
     call wm_draw_one
     cmp  byte [edi+16], WM_TERM
     jne  .p1next
-    call term_redraw            ; repaint terminal content after chrome
+    call term_redraw
 .p1next:
     inc  dword [wm_i]
     jmp  .p1loop
 .p1done:
-
-    call wm_draw_taskbar_btns
-    cmp  byte [sm_open], 1
-    jne  .no_sm
-    call wm_draw_startmenu
-.no_sm:
-    ; draw content for non-terminal windows BEFORE pass 2
-    ; so focused window (terminal or otherwise) is always the last thing drawn
     call wm_redraw_contents
-
-    ; Pass 2: focused window drawn last (always on top)
+    ; draw focused window last
     mov  dword [wm_i], 0
 .p2loop:
     mov  ecx, [wm_i]
@@ -522,17 +548,16 @@ wm_draw_all:
     jge  .p2done
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
-    cmp  byte [edi+17], 1       ; open?
+    cmp  byte [edi+17], 1
     jne  .p2next
-    cmp  byte [edi+18], 1       ; focused?
+    cmp  byte [edi+18], 1
     jne  .p2next
     call wm_draw_one
     cmp  byte [edi+16], WM_TERM
     jne  .p2content
-    call term_redraw            ; repaint terminal content after chrome
+    call term_redraw
     jmp  .p2next
 .p2content:
-    ; for focused non-terminal window, redraw its content on top too
     movzx eax, byte [edi+16]
     cmp  eax, WM_CLOCK
     je   .p2clock
@@ -558,11 +583,143 @@ wm_draw_all:
     inc  dword [wm_i]
     jmp  .p2loop
 .p2done:
+    ; clear dirty flags on all windows after full redraw
+    mov  dword [wm_i], 0
+.clr_dirty:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .clr_done
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    mov  byte [edi+19], 0
+    inc  dword [wm_i]
+    jmp  .clr_dirty
+.clr_done:
     call cursor_save_bg
     call cursor_draw
-    call gfx_flush
+    call gfx_flush_full
     popa
     ret
+
+; - wm_draw_dirty -
+; Incremental redraw: only redraws windows marked dirty.
+; Call from main loop each frame instead of wm_draw_all.
+wm_draw_dirty:
+    pusha
+    ; check if any window is dirty
+    xor  eax, eax
+    mov  byte [wm_any_dirty], 0
+.chk_loop:
+    cmp  eax, WM_MAX_WINS
+    jge  .chk_done
+    imul edi, eax, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .chk_next
+    cmp  byte [edi+19], 1
+    jne  .chk_next
+    mov  byte [wm_any_dirty], 1
+    jmp  .chk_done
+.chk_next:
+    inc  eax
+    jmp  .chk_loop
+.chk_done:
+    cmp  byte [wm_any_dirty], 0
+    je   .dd_done               ; nothing dirty, skip
+    ; at least one window dirty - do full redraw
+    ; (desktop must be redrawn to erase old content under windows)
+    call cursor_erase
+    call wm_draw_desktop
+    call icons_draw
+    call wm_draw_taskbar_btns
+    cmp  byte [sm_open], 1
+    jne  .dd_no_sm
+    call wm_draw_startmenu
+.dd_no_sm:
+    ; redraw unfocused dirty windows
+    mov  dword [wm_i], 0
+.dd_p1:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .dd_p1done
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .dd_p1next
+    cmp  byte [edi+18], 1
+    je   .dd_p1next
+    call wm_draw_one
+    cmp  byte [edi+16], WM_TERM
+    jne  .dd_p1next
+    call term_redraw
+.dd_p1next:
+    inc  dword [wm_i]
+    jmp  .dd_p1
+.dd_p1done:
+    call wm_redraw_contents
+    ; redraw focused dirty window
+    mov  dword [wm_i], 0
+.dd_p2:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .dd_p2done
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+17], 1
+    jne  .dd_p2next
+    cmp  byte [edi+18], 1
+    jne  .dd_p2next
+    call wm_draw_one
+    cmp  byte [edi+16], WM_TERM
+    jne  .dd_p2content
+    call term_redraw
+    jmp  .dd_p2next
+.dd_p2content:
+    movzx eax, byte [edi+16]
+    cmp  eax, WM_CLOCK
+    je   .dd_clock
+    cmp  eax, WM_FILES
+    je   .dd_files
+    cmp  eax, WM_HELP
+    je   .dd_help
+    cmp  eax, WM_BROWSER
+    je   .dd_browser
+    jmp  .dd_p2next
+.dd_clock:
+    call wm_draw_clock
+    jmp  .dd_p2next
+.dd_files:
+    call wm_draw_files
+    jmp  .dd_p2next
+.dd_help:
+    call wm_draw_help
+    jmp  .dd_p2next
+.dd_browser:
+    call browser_draw
+.dd_p2next:
+    inc  dword [wm_i]
+    jmp  .dd_p2
+.dd_p2done:
+    ; clear all dirty flags
+    mov  dword [wm_i], 0
+.dd_clr:
+    mov  ecx, [wm_i]
+    cmp  ecx, WM_MAX_WINS
+    jge  .dd_clrdone
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    mov  byte [edi+19], 0
+    inc  dword [wm_i]
+    jmp  .dd_clr
+.dd_clrdone:
+    call cursor_save_bg
+    call cursor_draw
+    call gfx_flush_full
+.dd_done:
+    popa
+    ret
+
+wm_any_dirty: db 0
 
 ; - wm_open -
 ; In:  AL=type  EBX=x  ECX=y  EDX=w  ESI=h
@@ -605,6 +762,7 @@ wm_open:
     mov  [edi+16], al
     mov  byte [edi+17], 1       ; open
     mov  byte [edi+18], 1       ; focused
+    mov  byte [edi+19], 1       ; dirty - needs first draw
 
     ; pick title string
     cmp  eax, WM_TERM
@@ -755,6 +913,79 @@ wm_draw_close_x:
     pop  ecx
     pop  ebx
     pop  eax
+    ret
+
+; - wm_draw_scrollbar -
+; Draws a vertical scrollbar. Needs variables wm_sb_x, wm_sb_y, wm_sb_w, wm_sb_h,
+; wm_sb_total, wm_sb_visible, wm_sb_pos set before calling.
+; Preserves all general registers.
+wm_draw_scrollbar:
+    pusha
+    
+    ; 1. Draw track background
+    mov  eax, [wm_sb_x]
+    mov  ebx, [wm_sb_y]
+    mov  ecx, [wm_sb_w]
+    mov  edx, [wm_sb_h]
+    mov  esi, 0x08           ; dark grey track
+    call fb_fill_rect
+    
+    ; 2. Calculate thumb size and position
+    mov  esi, [wm_sb_total]
+    mov  edi, [wm_sb_visible]
+    
+    ; if visible >= total, thumb fills track
+    cmp  edi, esi
+    jge  .full_thumb
+    
+    ; thumb height = (visible * track_height) / total
+    mov  eax, edi
+    mov  ecx, edx            ; ECX = track_height
+    imul ecx                 ; EAX = visible * track_height
+    xor  edx, edx
+    div  esi                 ; EAX = thumb_height
+    
+    ; enforce minimum thumb height of 8 pixels
+    cmp  eax, 8
+    jge  .th_ok
+    mov  eax, 8
+.th_ok:
+    mov  ebp, eax            ; EBP = thumb_height
+    
+    ; max thumb position = track_height - thumb_height
+    mov  ecx, [wm_sb_h]
+    sub  ecx, ebp            ; ECX = max_scroll_y
+    
+    ; thumb_y = (scroll_pos * max_scroll_y) / (total - visible)
+    mov  eax, [wm_sb_pos]
+    imul ecx                 ; EAX = pos * max_scroll_y
+    mov  ecx, esi
+    sub  ecx, edi            ; ECX = total - visible
+    test ecx, ecx
+    jz   .full_thumb         ; avoid div by zero if calculated total-visible=0
+    xor  edx, edx
+    div  ecx                 ; EAX = thumb_y (relative to track)
+    
+    ; Draw thumb
+    mov  ebx, [wm_sb_y]
+    add  ebx, eax            ; Y = track_y + thumb_y
+    mov  eax, [wm_sb_x]
+    mov  ecx, [wm_sb_w]
+    mov  edx, ebp            ; Height = thumb_height
+    mov  esi, 0x0F           ; white thumb
+    call fb_fill_rect
+    jmp  .done
+    
+.full_thumb:
+    mov  eax, [wm_sb_x]
+    mov  ebx, [wm_sb_y]
+    mov  ecx, [wm_sb_w]
+    mov  edx, [wm_sb_h]
+    mov  esi, 0x0F           ; white thumb
+    call fb_fill_rect
+    
+.done:
+    popa
     ret
 
 ; - wm_hit_test -
@@ -1437,6 +1668,12 @@ wm_draw_clock:
     mov  dh,  0x08
     call fb_draw_string
 
+    ; mark entire clock window dirty
+    mov  eax, [edi+4]
+    mov  ebx, eax
+    add  ebx, [edi+12]
+    call gfx_mark_dirty
+
 .done:
     pop  edi
     pop  esi
@@ -1865,8 +2102,8 @@ wm_update_contents:
     jne  .no_rtc_tick
     inc  dword [sw_rtc_secs]
 .no_rtc_tick:
-    ; wm_draw_all redraws taskbar clock too - no separate call needed
-    call wm_draw_all                ; full redraw keeps windows + taskbar intact
+    ; update clock only per second
+    call wm_draw_taskbar_clock
 .no_clock:
     pop  eax
 
@@ -1992,6 +2229,11 @@ wm_draw_taskbar_clock:
     mov  dl,  0x0F              ; white
     mov  dh,  WM_C_TBAR
     call fb_draw_string
+
+    ; mark taskbar row dirty for gfx_flush
+    mov  eax, WM_TASKBAR_Y
+    mov  ebx, 479
+    call gfx_mark_dirty
 
     pop  edi
     pop  esi
@@ -2384,6 +2626,14 @@ sm_commands:
     dd wm_s_cmd_stopwatch
     dd wm_s_cmd_files
     dd wm_s_cmd_helpwin
+
+wm_sb_x:         dd 0
+wm_sb_y:         dd 0
+wm_sb_w:         dd 0
+wm_sb_h:         dd 0
+wm_sb_total:     dd 0
+wm_sb_visible:   dd 0
+wm_sb_pos:       dd 0
 
 wm_last_sec:     dd 0xFF      ; force first update
 gfx_needs_flush: db 0

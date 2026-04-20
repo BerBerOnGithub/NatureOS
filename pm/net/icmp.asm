@@ -204,6 +204,12 @@ icmp_poll:
     push edx
     push esi
 
+    inc  dword [net_poll_throttle]
+    test dword [net_poll_throttle], 0x3FF
+    jnz  .skip_hw
+    call mouse_poll
+    call pm_kb_poll
+.skip_hw:
     call eth_recv            ; CF=1 nothing; CF=0: ESI=payload, ECX=len, DX=ethertype
     jc   .done
 

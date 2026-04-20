@@ -65,10 +65,53 @@ gfx_init:
     ret
 
 ; -
-; gfx_flush - blit GFX_SHADOW -> MMIO hardware framebuffer
-; Call at the end of every complete draw operation.
+; gfx_flush - blit only dirty rows from GFX_SHADOW -> MMIO hardware framebuffer
+; Uses gfx_dirty_y0 / gfx_dirty_y1 to limit what gets copied.
+; Call gfx_mark_dirty before drawing to expand the dirty region.
+; Call gfx_flush_full for a guaranteed full blit (e.g. after wm_draw_all).
 ; -
 gfx_flush:
+    push eax
+    push ecx
+    push esi
+    push edi
+    ; if nothing dirty, skip
+    mov  eax, [gfx_dirty_y0]
+    cmp  eax, 480
+    jge  .gf_done
+    ; clamp y1
+    mov  ecx, [gfx_dirty_y1]
+    cmp  ecx, 480
+    jle  .gf_y1ok
+    mov  ecx, 480
+.gf_y1ok:
+    ; rows to copy = y1 - y0
+    sub  ecx, eax
+    jle  .gf_done
+    ; src = GFX_SHADOW + y0*640
+    mov  esi, GFX_SHADOW
+    imul eax, 640
+    add  esi, eax
+    ; dst = gfx_hw_base + y0*640
+    mov  edi, [gfx_hw_base]
+    mov  eax, [gfx_dirty_y0]
+    imul eax, 640
+    add  edi, eax
+    ; copy ecx rows * 640 bytes = ecx*160 dwords
+    imul ecx, 160
+    rep  movsd
+    ; reset dirty region
+    mov  dword [gfx_dirty_y0], 480
+    mov  dword [gfx_dirty_y1], 0
+.gf_done:
+    pop  edi
+    pop  esi
+    pop  ecx
+    pop  eax
+    ret
+
+; gfx_flush_full - blit entire shadow buffer to MMIO (use after wm_draw_all)
+gfx_flush_full:
     push eax
     push ecx
     push esi
@@ -77,9 +120,29 @@ gfx_flush:
     mov  edi, [gfx_hw_base]
     mov  ecx, GFX_PIX / 4
     rep  movsd
+    mov  dword [gfx_dirty_y0], 480
+    mov  dword [gfx_dirty_y1], 0
     pop  edi
     pop  esi
     pop  ecx
+    pop  eax
+    ret
+
+; gfx_mark_dirty - expand dirty region to include rows EAX..EBX (inclusive)
+; In: EAX=y_top, EBX=y_bottom
+gfx_mark_dirty:
+    push eax
+    push ebx
+    cmp  eax, [gfx_dirty_y0]
+    jge  .md_y0ok
+    mov  [gfx_dirty_y0], eax
+.md_y0ok:
+    inc  ebx
+    cmp  ebx, [gfx_dirty_y1]
+    jle  .md_y1ok
+    mov  [gfx_dirty_y1], ebx
+.md_y1ok:
+    pop  ebx
     pop  eax
     ret
 
@@ -322,4 +385,6 @@ gfx_rect_x:    dd 0
 gfx_rect_y:    dd 0
 gfx_rect_w:    dd 0
 gfx_rect_h:    dd 0
+gfx_dirty_y0:  dd 480      ; start at 480 = nothing dirty
+gfx_dirty_y1:  dd 0
 gfx_rect_col:  dd 0

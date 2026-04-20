@@ -533,6 +533,12 @@ cmd_arping:
     ; timeout ~500000 iterations
     mov  ecx, 500000
 .poll:
+    inc  dword [net_poll_throttle]
+    test dword [net_poll_throttle], 0x3FF
+    jnz  .skip_hw
+    call mouse_poll
+    call pm_kb_poll
+.skip_hw:
     push ecx
     call eth_recv            ; CF=1 no packet; CF=0: ESI=payload,ECX=len,DX=etype
     jc   .no_pkt

@@ -111,11 +111,11 @@ if /i "%~1"=="run" goto :run
 exit /b 0
 
 :run
-qemu-system-x86_64 ^
+"D:\Program Files\qemu\qemu-system-x86_64" ^
   -cdrom claudeos.iso ^
   -drive format=raw,file=data.img,if=ide,index=3 ^
   -boot d ^
-  -m 64M ^
+  -m 256M ^
   -cpu qemu64 ^
   -smp 1 ^
   -vga std ^

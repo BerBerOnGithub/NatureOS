@@ -80,7 +80,10 @@ pm_entry:
     call term_init
 
 .loop:
+    sti
+    hlt                      ; yield CPU until next IRQ (PIT ~18Hz) - prevents QEMU mouse stutter
     call mouse_poll
+    call pm_kb_poll          ; Drain hardware 8042 into RAM buffer
 
     ; update icon hover state (for future use)
     call icons_hover
@@ -129,9 +132,12 @@ pm_entry:
     call wm_update_contents
     call term_tick
     call browser_tick
+    call wm_draw_dirty          ; only redraws windows marked dirty
+
     cmp  byte [scr_pending], 1
     jne  .no_scr
 .no_scr:
+    call gfx_flush
     jmp  .loop
 
 ; -
@@ -621,14 +627,14 @@ pm_cmd_files:
 ; ------------------------------------
 ; DEBUG TRACE STRINGS AND UART HOOK
 ; ------------------------------------
-dbg_msg_1: db '[DEBUG] Phase 1 - Before irq_init', 13, 10, 0
-dbg_msg_2: db '[DEBUG] Phase 2 - Before paging_init', 13, 10, 0
-dbg_msg_3: db '[DEBUG] Phase 3 - Before bios_disk_init', 13, 10, 0
-dbg_msg_4: db '[DEBUG] Phase 4 - Before fsd_init', 13, 10, 0
-dbg_msg_5: db '[DEBUG] Phase 5 - Before pm_drv_init', 13, 10, 0
-dbg_msg_6: db '[DEBUG] Phase 6 - Before scr_counter_init', 13, 10, 0
-dbg_msg_7: db '[DEBUG] Phase 7 - Before gfx_init', 13, 10, 0
-dbg_msg_8: db '[DEBUG] Phase 8 - Survived OS initialization!', 13, 10, 0
+dbg_msg_1: db '[P1]irq', 13, 10, 0
+dbg_msg_2: db '[P2]paging', 13, 10, 0
+dbg_msg_3: db '[P3]disk', 13, 10, 0
+dbg_msg_4: db '[P4]fsd', 13, 10, 0
+dbg_msg_5: db '[P5]drv', 13, 10, 0
+dbg_msg_6: db '[P6]scr', 13, 10, 0
+dbg_msg_7: db '[P7]gfx', 13, 10, 0
+dbg_msg_8: db '[P8]done', 13, 10, 0
 
 dbg_serial_puts:
     pusha

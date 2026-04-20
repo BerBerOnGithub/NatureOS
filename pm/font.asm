@@ -52,8 +52,8 @@ fb_draw_char:
 
 .start:
 
-    ; compute glyph pointer: font_data + char*8
-    movzx eax, al
+    ; compute glyph pointer: font_data + (char & 0x7F)*8
+    and   eax, 0x7F          ; Limit to first 128 characters
     shl   eax, 3
     add   eax, font_data
     mov   [fc_glyph], eax
@@ -296,7 +296,6 @@ font_data:
     db 0x70,0x18,0x18,0x0E,0x18,0x18,0x70,0x00  ; 7D '}'
     db 0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00  ; 7E '~'
     db 0x00,0x10,0x38,0x6C,0xC6,0xC6,0xFE,0x00  ; 7F
-    times 128*8 db 0x00                          ; 80-FF blank
 
 ; String for title bar test
 pm_str_title: db 'NatureOS v2.0', 0
@@ -307,7 +306,7 @@ pm_str_title: db 'NatureOS v2.0', 0
 ; -
 fb_draw_char_scaled:
     pusha
-    movzx eax, al
+    and   eax, 0x7F          ; Limit to first 128 characters
     shl   eax, 3
     add   eax, font_data
     mov   [fcs_glyph], eax

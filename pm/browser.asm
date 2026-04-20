@@ -117,12 +117,35 @@ browser_draw:
     mov  ebx, [edi+4]
     add  ebx, WM_TITLE_H + 30 ; content y
     mov  ecx, [edi+8]
-    sub  ecx, 18            ; content w
+    sub  ecx, 32            ; content w (leave room for scrollbar)
     mov  edx, [edi+12]
     sub  edx, WM_TITLE_H + 35 ; content h
     
     mov  esi, browser_content
     call browser_draw_content
+    
+    ; Draw scrollbar
+    mov  ebx, eax
+    add  ebx, ecx
+    add  ebx, 4
+    mov  [wm_sb_x], ebx
+    mov  eax, [br_y0]
+    mov  [wm_sb_y], eax
+    mov  dword [wm_sb_w], 10
+    mov  eax, [br_h]
+    mov  [wm_sb_h], eax
+    mov  [wm_sb_visible], eax
+    
+    ; if total_h == 0, make it at least visible to draw full thumb
+    mov  eax, [browser_total_h]
+    test eax, eax
+    jnz  .total_ok
+    mov  eax, [wm_sb_visible]
+.total_ok:
+    mov  [wm_sb_total], eax
+    mov  eax, [browser_scroll_y]
+    mov  [wm_sb_pos], eax
+    call wm_draw_scrollbar
     popa
     
     popa
@@ -151,6 +174,13 @@ browser_draw_content:
     cmp  al, 10             ; LF
     je   .lf
     
+    cmp  al, 9              ; Tab
+    jne  .not_tab
+    mov  al, 32             ; convert to space
+.not_tab:
+    cmp  al, 32
+    jl   .loop              ; skip other control codes
+    
     ; check wrap
     mov  edx, [br_cx]
     sub  edx, [br_x0]
@@ -158,13 +188,35 @@ browser_draw_content:
     cmp  edx, [br_w]
     ja   .wrap
     
+    ; check vertical clip against scroll
+    mov  ecx, [br_cy]
+    sub  ecx, [browser_scroll_y]
+    
+    cmp  ecx, [br_y0]
+    jl   .skip_draw
+    
+    mov  edx, ecx
+    sub  edx, [br_y0]
+    add  edx, 8
+    cmp  edx, [br_h]
+    jbe  .do_draw
+    
+    ; Below visible screen
+    cmp  byte [browser_measuring], 1
+    je   .skip_draw
+    jmp  .exit
+
+.do_draw:
+    cmp  byte [browser_measuring], 1
+    je   .skip_draw
+    
     ; draw char
     mov  ebx, [br_cx]
-    mov  ecx, [br_cy]
     mov  dl, 0x00           ; black
     mov  dh, 0x0F           ; white
     call fb_draw_char
     
+.skip_draw:
     add  dword [br_cx], 8
     jmp  .loop
 
@@ -177,28 +229,23 @@ browser_draw_content:
     mov  eax, [br_x0]
     mov  [br_cx], eax
     add  dword [br_cy], 8
-    ; check bottom clip
-    mov  eax, [br_cy]
-    sub  eax, [br_y0]
-    add  eax, 8
-    cmp  eax, [br_h]
-    ja   .done
     jmp  .loop
 
 .wrap:
     mov  eax, [br_x0]
     mov  [br_cx], eax
     add  dword [br_cy], 8
-    ; check bottom clip
-    mov  eax, [br_cy]
-    sub  eax, [br_y0]
-    add  eax, 8
-    cmp  eax, [br_h]
-    ja   .done
     dec  esi                ; re-process current char
     jmp  .loop
 
 .done:
+    cmp  byte [browser_measuring], 1
+    jne  .exit
+    mov  eax, [br_cy]
+    add  eax, 8
+    sub  eax, [br_y0]
+    mov  [browser_total_h], eax
+.exit:
     popa
     ret
 
@@ -231,11 +278,7 @@ browser_tick:
     
     ; Focused browser found!
     ; Check keyboard
-    in   al, 0x64
-    test al, 0x01
-    jz   .done
-    test al, 0x20
-    jnz  .done
+.key_loop:
     call pm_getkey
     or   al, al
     jz   .done
@@ -245,10 +288,14 @@ browser_tick:
     je   .bs
     cmp  al, 13 ; enter
     je   .go
+    cmp  al, 0x80 ; Up
+    je   .scroll_up
+    cmp  al, 0x81 ; Down
+    je   .scroll_down
     cmp  al, 32
-    jl   .done
+    jl   .key_loop
     cmp  al, 127
-    jge  .done
+    jge  .key_loop
     
     ; Append to URL
     mov  edi, browser_url
@@ -263,8 +310,8 @@ browser_tick:
 .found:
     mov  [edi+ecx], al
     mov  byte [edi+ecx+1], 0
-    call wm_draw_all
-    jmp  .done
+    call wm_invalidate
+    jmp  .key_loop
     
 .bs:
     mov  edi, browser_url
@@ -278,19 +325,45 @@ browser_tick:
     jmp  .done
 .found2:
     test ecx, ecx
-    jz   .done
+    jz   .key_loop
     mov  byte [edi+ecx-1], 0
-    call wm_draw_all
-    jmp  .done
+    call wm_invalidate
+    jmp  .key_loop
     
 .go:
     call browser_fetch
-    call wm_draw_all
-    jmp  .done
+    call wm_invalidate
+    jmp  .key_loop
 
 .next:
     inc  dword [wm_i]
     jmp  .loop
+.scroll_up:
+    cmp  dword [browser_scroll_y], 8
+    jl   .zero_scroll
+    sub  dword [browser_scroll_y], 16
+    call wm_invalidate
+    jmp  .key_loop
+.zero_scroll:
+    mov  dword [browser_scroll_y], 0
+    call wm_invalidate
+    jmp  .key_loop
+.scroll_down:
+    mov  eax, [browser_total_h]
+    sub  eax, [br_h]
+    cmp  eax, 0
+    jle  .key_loop
+    mov  ebx, [browser_scroll_y]
+    add  ebx, 16
+    cmp  ebx, eax
+    jge  .max_scroll
+    mov  [browser_scroll_y], ebx
+    call wm_invalidate
+    jmp  .key_loop
+.max_scroll:
+    mov  [browser_scroll_y], eax
+    call wm_invalidate
+    jmp  .key_loop
 .done:
     popa
     ret
@@ -308,21 +381,51 @@ browser_click:
     mov  edx, [edi+8]
     sub  edx, 50
     cmp  eax, edx
-    jl   .done
+    jl   .check_scroll
     mov  edx, [edi+8]
     sub  edx, 5
     cmp  eax, edx
-    jg   .done
+    jg   .check_scroll
     
     cmp  ebx, WM_TITLE_H + 5
-    jl   .done
+    jl   .check_scroll
     cmp  ebx, WM_TITLE_H + 21
-    jg   .done
+    jg   .check_scroll
     
     ; Clicked Go!
     call browser_fetch
-    call wm_draw_all
+    call wm_invalidate
+    jmp  .done
+
+.check_scroll:
+    mov  edx, [edi+8]
+    sub  edx, 24
+    cmp  eax, edx
+    jl   .done
     
+    cmp  ebx, WM_TITLE_H + 30
+    jl   .done
+    mov  edx, [edi+12]
+    sub  edx, 5
+    cmp  ebx, edx
+    jg   .done
+
+    sub  ebx, WM_TITLE_H + 30
+    mov  ecx, [edi+12]
+    sub  ecx, WM_TITLE_H + 35
+    test ecx, ecx
+    jle  .done
+    mov  eax, [browser_total_h]
+    sub  eax, ecx
+    cmp  eax, 0
+    jle  .done
+    xchg eax, ebx
+    imul ebx
+    xor  edx, edx
+    div  ecx
+    mov  [browser_scroll_y], eax
+    call wm_invalidate
+
 .done:
     popa
     ret
@@ -489,6 +592,12 @@ dns_resolve_hostname:
     ; Poll for DNS response
     mov  dword [dns_poll_ctr], 2000000
 .dns_poll:
+    inc  dword [net_poll_throttle]
+    test dword [net_poll_throttle], 0x3FF
+    jnz  .skip_hw
+    call mouse_poll
+    call pm_kb_poll
+.skip_hw:
     call eth_recv
     jc   .dns_empty
 
@@ -627,10 +736,12 @@ browser_fetch:
     pusha
 
     ; 1. Set "Fetching..." message
+    mov  dword [browser_scroll_y], 0
+    mov  dword [browser_total_h], 0
     mov  edi, browser_content
     mov  esi, browser_s_fetching
     call .copy_str
-    call wm_draw_all
+    call wm_invalidate
 
     ; 2. Parse URL
     mov  esi, browser_url
@@ -687,8 +798,8 @@ browser_fetch:
     mov  dword [tcpg_total], 0
     mov  edi, browser_content
     xor  eax, eax
-    mov  ecx, 4096
-    rep  stosd              ; clear 16KB
+    mov  ecx, 125000
+    rep  stosd              ; clear 500KB
     
     mov  edi, browser_content
 .recv_loop:
@@ -711,11 +822,11 @@ browser_fetch:
     test ecx, ecx
     jz   .recv_done         ; EOF
     
-    ; Safety check: don't overflow browser_content (16KB)
+    ; Safety check: don't overflow browser_content (500KB)
     mov  eax, edi
     sub  eax, browser_content
     add  eax, ecx
-    cmp  eax, 16000
+    cmp  eax, 500000
     jae  .recv_done         ; stop if near limit
     
     ; Copy from tcpg_recv_buf to browser_content
@@ -732,10 +843,7 @@ browser_fetch:
     
     ; [NEW] Brief progress update: redraw browser content while fetching
     ; This helps show it's not "dead" even if it's blocking
-    mov  byte [edi], 0      ; null term for draw
-    push edi
-    call wm_draw_all
-    pop  edi
+    ; (Removed wm_draw_all here to prevent 50ms freezing per packet)
     
     jmp  .recv_loop
 
@@ -748,6 +856,17 @@ browser_fetch:
     mov  edi, browser_content
     call browser_strip_headers
 
+    ; Measure text height before drawing
+    mov  byte [browser_measuring], 1
+    mov  esi, browser_content
+    mov  eax, [br_x0]
+    mov  ebx, [br_y0]
+    mov  ecx, [br_w]
+    mov  edx, [br_h]
+    call browser_draw_content
+    mov  byte [browser_measuring], 0
+
+    call wm_invalidate
     jmp  .done
 
 .err_url:
@@ -782,7 +901,7 @@ browser_fetch:
 
 ; - Data -
 browser_url:     times 256 db 0
-browser_content: times 16384 db 0
+browser_content  equ 0x140000
 browser_s_go:    db 'Go', 0
 browser_s_default_url: db '142.250.180.142 80 /', 0
 browser_s_hdr_host:    db 'Host: google.com', 13, 10, 0
@@ -797,3 +916,6 @@ browser_hostname:   times 256 db 0     ; buffer for parsed hostname (null-termin
 http_prefix:        db 'http://', 0    ; URL scheme prefix to detect and strip
 browser_s_def_path: db '/', 0          ; default path when URL has no explicit path
 dns_tmp_hostname:   dd 0               ; pointer to hostname being resolved
+browser_scroll_y:   dd 0               ; virtual scroll offset
+browser_total_h:    dd 0               ; total content height
+browser_measuring:  db 0               ; 1 = measure height without drawing

@@ -118,6 +118,16 @@ mouse_poll:
     ret
 
 .process:
+    ; mark OLD cursor region dirty (before erase)
+    mov  eax, [mouse_y]
+    mov  ebx, eax
+    add  ebx, 15
+    cmp  ebx, 479
+    jle  .old_ok
+    mov  ebx, 479
+.old_ok:
+    call gfx_mark_dirty
+
     ; erase cursor at CURRENT position before updating coords
     call cursor_erase
 
@@ -163,6 +173,16 @@ mouse_poll:
 
     ; draw cursor at NEW position (cursor_draw saves bg first)
     call  cursor_draw
+
+    ; mark NEW cursor region dirty (after draw)
+    mov  eax, [mouse_y]
+    mov  ebx, eax
+    add  ebx, 15
+    cmp  ebx, 479
+    jle  .new_ok
+    mov  ebx, 479
+.new_ok:
+    call gfx_mark_dirty
     ret
 
 ; -

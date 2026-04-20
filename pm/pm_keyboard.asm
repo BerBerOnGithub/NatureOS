@@ -13,26 +13,85 @@
 [BITS 32]
 
 ; -
+; pm_kb_poll - Drain ALL available keyboard data from 8042 hardware.
+; If NOTHING is focused, keys are discarded. If SOMETHING is focused,
+; keys are pushed into the RAM buffer (pm_kb_queue).
+; -
+pm_kb_poll:
+    pusha
+
+    ; check if ANY window is focused (bit +18 in wm_table entries)
+    xor  ecx, ecx
+.fchk:
+    cmp  ecx, 4              ; WM_MAX_WINS
+    jge  .no_focus
+    imul ebx, ecx, 32        ; WM_STRIDE
+    cmp  byte [wm_table + ebx + 18], 1
+    je   .focused_loop
+    inc  ecx
+    jmp  .fchk
+
+.no_focus:
+    ; nothing focused: clear RAM buffer and drain hardware
+    mov  dword [pm_kb_q_head], 0
+    mov  dword [pm_kb_q_tail], 0
+.drain_loop:
+    in   al, 0x64
+    test al, 0x01
+    jz   .done
+    test al, 0x20
+    jnz  .done
+    in   al, 0x60            ; discard
+    jmp  .drain_loop
+
+.focused_loop:
+    in   al, 0x64
+    test al, 0x01
+    jz   .done               ; nothing in hardware buffer
+    test al, 0x20
+    jnz  .done               ; it's mouse data, leave it for mouse_poll
+
+    in   al, 0x60            ; read scan code from hardware
+
+    ; push to ring buffer: [head] = al, head = (head + 1) % 32
+    mov  ebx, [pm_kb_q_head]
+    mov  ecx, ebx
+    inc  ecx
+    and  ecx, 31             ; modulo 32
+    cmp  ecx, [pm_kb_q_tail] ; buffer full?
+    je   .done               ; drop key if full
+
+    mov  [pm_kb_queue + ebx], al
+    mov  [pm_kb_q_head], ecx
+    jmp  .focused_loop
+.done:
+    popa
+    ret
+
+; -
 ; pm_getkey - NON-BLOCKING key check. Returns AL=0 if no key ready.
-; Only reads keyboard (not mouse) data. Returns 0xFF for PrtSc.
+; Now pulls from the RAM ring buffer (pm_kb_queue).
 ; -
 pm_getkey:
     push ebx
-    ; Check if keyboard data is available (bit 0 set, bit 5 clear = keyboard)
-    in   al, 0x64
-    test al, 0x01
-    jz   .no_key             ; nothing in buffer
-    test al, 0x20
-    jnz  .no_key             ; it's mouse data, not keyboard
-    in   al, 0x60            ; read scan code
+    push ecx
+.next_key:
+    ; is buffer empty? (head == tail)
+    mov  ebx, [pm_kb_q_tail]
+    cmp  ebx, [pm_kb_q_head]
+    je   .no_key
+
+    ; pull from tail
+    mov  al, [pm_kb_queue + ebx]
+    inc  ebx
+    and  ebx, 31
+    mov  [pm_kb_q_tail], ebx
 
     ; E0 extended prefix
     cmp  al, 0xE0
     jne  .not_e0
     mov  byte [pm_e0], 1
-    xor  al, al              ; return 0, caller will poll again next tick
-    pop  ebx
-    ret
+    jmp  .next_key
 
 .not_e0:
     cmp  byte [pm_e0], 1
@@ -40,20 +99,32 @@ pm_getkey:
     mov  byte [pm_e0], 0
 
     cmp  al, 0x2A            ; fake shift from PrtSc press " ignore
-    je   .no_key
+    je   .next_key
     cmp  al, 0xAA            ; fake shift release " ignore
-    je   .no_key
+    je   .next_key
     cmp  al, 0xB7            ; PrtSc release " ignore
-    je   .no_key
+    je   .next_key
     cmp  al, 0x35            ; numpad /  (E0 prefix)
     jne  .not_numdiv
     mov  al, '/'
+    pop  ecx
     pop  ebx
     ret
 .not_numdiv:
     cmp  al, 0x37            ; PrtSc press -- signal
-    jne  .no_key
+    je   .prtsc
+    cmp  al, 0x48            ; Up
+    jne  .not_up
+    mov  al, 0x80
+    jmp  .done
+.not_up:
+    cmp  al, 0x50            ; Down
+    jne  .next_key
+    mov  al, 0x81
+    jmp  .done
+.prtsc:
     mov  al, 0xFF
+    pop  ecx
     pop  ebx
     ret
 
@@ -67,12 +138,22 @@ pm_getkey:
     cmp  al, 0xB6
     je   .shift_off
 
-    test al, 0x80            ; key release " ignore
-    jnz  .no_key
+    ; Ctrl / Alt modifier keys - absorb without producing a character
+    cmp  al, 0x1D            ; Ctrl make
+    je   .next_key
+    cmp  al, 0x9D            ; Ctrl release
+    je   .next_key
+    cmp  al, 0x38            ; Alt make
+    je   .next_key
+    cmp  al, 0xB8            ; Alt release
+    je   .next_key
+
+    test al, 0x80            ; key release - ignore
+    jnz  .next_key
 
     movzx ebx, al
     cmp  ebx, 84             ; 0x54 - include numpad range 0x47-0x53
-    jae  .no_key
+    jae  .next_key
 
     cmp  byte [pm_shift], 0
     jne  .shifted
@@ -82,20 +163,21 @@ pm_getkey:
     mov  al, [pm_scancode_shift + ebx]
 
 .done:
+    pop  ecx
     pop  ebx
     ret
 
 .shift_on:
     mov  byte [pm_shift], 1
+    jmp  .next_key
 .no_key:
     xor  al, al
+    pop  ecx
     pop  ebx
     ret
 .shift_off:
     mov  byte [pm_shift], 0
-    xor  al, al
-    pop  ebx
-    ret
+    jmp  .next_key
 
 ; -
 ; pm_getkey_block - BLOCKING version (used by text-mode shell only)

@@ -17,6 +17,11 @@ pm_input_buf:   times 128 db 0
 pm_shift:       db 0         ; 1 if shift currently held
 pm_e0:          db 0         ; 1 if last scancode was E0 prefix
 
+; Keyboard ring buffer (32 bytes)
+pm_kb_q_head:   dd 0
+pm_kb_q_tail:   dd 0
+pm_kb_queue:    times 32 db 0
+
 pm_calc_n1:     dd 0
 pm_calc_n2:     dd 0
 pm_calc_op:     db 0

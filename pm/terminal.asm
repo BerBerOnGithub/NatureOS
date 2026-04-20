@@ -197,22 +197,39 @@ term_redraw:
 ; term_tick " non-blocking key handler
 ; -
 term_tick:
-    ; check if terminal is focused (it's always window 0 in this simplified OS)
-    cmp  byte [wm_table + 18], 1
-    jne  .done
-    ; non-blocking: check keyboard buffer has data AND it's not mouse data
-    in   al, 0x64
-    test al, 0x01           ; any data at all?
-    jz   .done
-    test al, 0x20           ; aux (mouse) data? skip entirely this tick
-    jnz  .done
+    pusha
+    ; search for focused terminal window
+    mov  ecx, 0
+.fwin:
+    cmp  ecx, WM_MAX_WINS
+    jge  .no_focus
+    imul edi, ecx, WM_STRIDE
+    add  edi, wm_table
+    cmp  byte [edi+16], WM_TERM
+    jne  .fnext
+    cmp  byte [edi+17], 1       ; open
+    jne  .fnext
+    cmp  byte [edi+18], 1       ; focused
+    je   .handle
+.fnext:
+    inc  ecx
+    jmp  .fwin
+
+.no_focus:
+    popa
+    ret
+
+.handle:
+    mov  [term_win_id], ecx
+    mov  byte [term_changed_this_tick], 0
+.handle_loop:
     call pm_getkey
     or   al, al
     jz   .done
     cmp  al, 0xFF            ; Print Screen sentinel
     jne  .not_prtsc
     call wm_screenshot_capture
-    jmp  .done
+    jmp  .handle_loop
 .not_prtsc:
     cmp  al, 13
     je   .enter
@@ -238,7 +255,8 @@ term_tick:
     mov  dl, TERM_FG
     call term_putchar_col
     pop  edx
-    jmp  .done
+    mov  byte [term_changed_this_tick], 1
+    jmp  .handle_loop
 
 .backspace:
     cmp  dword [term_input_len], 0
@@ -264,7 +282,8 @@ term_tick:
     call fb_draw_char
     pop  edx
     pop  eax
-    jmp  .done
+    mov  byte [term_changed_this_tick], 1
+    jmp  .handle_loop
 
 .enter:
     call term_newline
@@ -281,8 +300,20 @@ term_tick:
     mov  dword [term_input_len], 0
     mov  dword [term_col], 0
     call term_draw_prompt
+    mov  byte [term_changed_this_tick], 1
+    jmp  .handle_loop
 .done:
+    cmp  byte [term_changed_this_tick], 1
+    jne  .no_inval
+    mov  ecx, [term_win_id]
+    call wm_invalidate
+.no_inval:
+    popa
     ret
+
+; local var for term_tick
+term_changed_this_tick: db 0
+term_win_id: dd 0
 
 ; -
 ; term_draw_prompt
@@ -309,17 +340,19 @@ term_putchar:
 term_putchar_col:
     pusha
 
-    ; --- serial output ---
+    ; --- serial output (non-blocking) ---
     push edx
     push eax
-.wait_tx_pm:
     mov  dx, 0x3FD
     in   al, dx
     test al, 0x20
-    jz   .wait_tx_pm
+    jz   .skip_serial_pm
     mov  dx, 0x3F8
     pop  eax
+    push eax
     out  dx, al
+.skip_serial_pm:
+    pop  eax
     pop  edx
     ; ---------------------
 
@@ -494,7 +527,7 @@ term_ci:          dd 0
 term_tmp_char:    db 0
 term_scroll_lim:  dd 0
 
-term_buf: times (TERM_BUF_ROWS * TERM_BUF_COLS * 2) db 0
+term_buf          equ 0x134000
 
 term_str_banner:  db 'NatureOS v2.0 - type help for commands', 0
 term_str_disk_ok: db 'Data disk: OK', 0

@@ -3,6 +3,58 @@
 ; ===========================================================================
 
 ; -
+; Boot menu strings  (CP437 double-line box with shadow effect)
+; ╔════╗  ║  ╠══╣  ╚════╝   ► = 0x10   • = 0x07   ░ = 0xB0  ▒ = 0xB1  ▓ = 0xB2
+; -
+str_mnu_top:      db 201, 205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205, 187, 0 ; 50 '='
+
+str_mnu_title:    db '                NatureOS Boot Menu                ', 0 ; 50 chars
+
+str_mnu_sub:      db '           NatureOS v2.0  ', 7, '  Build 2.0.0          ', 0 ; 50 chars
+str_mnu_sep:      db 204, 205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205, 185, 0 ; 50 '='
+
+str_mnu_blank:    db '                                                  ', 0 ; 50 spaces
+
+str_mnu_border_l:
+    db 186, 0
+str_mnu_border_r:
+    db 186, 0
+
+str_mnu_arrow_on:
+    db 16, ' ', 0      ; '► '
+str_mnu_arrow_off:
+    db '  ', 0         ; '  '
+
+str_mnu_o1desc:
+    db 'Graphical desktop   - WM, mouse, network        ', 0  ; 48 chars
+str_mnu_o2desc:
+    db 'Text-mode shell     - BIOS, FS, apps            ', 0  ; 48 chars
+str_mnu_o3desc:
+    db 'Memory tester       - RAM check, hardware       ', 0  ; 48 chars
+
+str_mnu_bot_main: db 200, 205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205,205, 188, 0 ; 50 '='
+str_mnu_shadow_bot: db 219, 219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219,219, 0 ; 53 characters
+str_mnu_hint:
+    db '            arrows/1/2/3 select.  Enter = boot            ', 0
+
+str_mt_title:    db ' *** NatureOS Memory Tester v1.0 ***', 0
+str_mt_test:     db ' Running Test: ', 0
+str_mt_t0:       db '#0 [Address: Walking 1s] ', 0
+str_mt_t1:       db '#1 [Address: Own Addr]   ', 0
+str_mt_t2:       db '#2 [MI: Ones & Zeros]    ', 0
+str_mt_t3:       db '#3 [MI: 8-bit Pattern]   ', 0
+str_mt_t4:       db '#4 [MI: Random Pattern]  ', 0
+str_mt_t5:       db '#5 [Block Move Test]     ', 0
+str_mt_t6:       db '#6 [Random Sequence]     ', 0
+str_mt_pattern:  db ' Current Pattern: 0x', 0
+
+str_mt_addr:     db ' Scanned: ', 0
+str_mt_errors:   db ' Total Errors:    ', 0
+str_mt_pass_lbl: db '  Pass: ', 0
+str_mt_mb:       db ' MB', 0
+str_mt_esc:      db ' Press ESC to exit to menu', 0
+
+; -
 ; Variables
 ; -
 shell_attr:      db ATTR_BRIGHT
@@ -14,10 +66,20 @@ sd_century: db 0
 sd_year:    db 0
 sd_month:   db 0
 sd_day:     db 0
+mt_errors:      dw 0
+mt_pass:        dw 0
+mt_cur_pattern: dd 0
 calc_n1_lo:      dw 0
 calc_n2_lo:      dw 0
 calc_op:         db 0
 rm_sp_save:      dw 0     ; real-mode SP saved before PM switch
+mnu_sel:         db 0
+mnu_row_base:    db 0
+mt_cur_addr:    dd 0
+mt_test_id:     dw 0
+mt_seed:        dd 0x12345678
+mt_active:       db 0      ; 1 if memory tester is running
+mt_ram_size:     dd 0x04000000 ; Limit in bytes (default 64MB)
 
 ; -
 ; Prompt strings
@@ -222,16 +284,14 @@ str_whoami_text: db 'root', 0
 str_mem_text:
     db 13, 10
     db ' Memory Map:', 13, 10
-    db ' 0x00000 - 0x003FF   IVT (Interrupt Vector Table)', 13, 10
-    db ' 0x00400 - 0x004FF   BIOS Data Area', 13, 10
-    db ' 0x00500 - 0x07BEF   Free (stack space)', 13, 10
-    db ' 0x07BF0 - 0x07BFF   Stack top', 13, 10
-    db ' 0x07C00 - 0x07DFF   Bootloader (MBR)', 13, 10
-    db ' 0x07E00 - 0x07FFF   Free', 13, 10
-    db ' 0x08000 - 0x0BFFF   NatureOS Kernel (you are here)', 13, 10
-    db ' 0x0C000 - 0x9FFFF   Conventional RAM (free)', 13, 10
-    db ' 0xB8000 - 0xBFFFF   VGA Text Buffer (80x25)', 13, 10
-    db ' 0xC0000 - 0xFFFFF   ROM / BIOS', 13, 10
+    db ' 0x00000-0x003FF IVT', 13, 10
+    db ' 0x00400-0x004FF BDA', 13, 10
+    db ' 0x00500-0x07BFF Stack/Free', 13, 10
+    db ' 0x07C00-0x07DFF Bootloader', 13, 10
+    db ' 0x08000-0x17FFF NatureOS Kernel', 13, 10
+    db ' 0x0C000-0x9FFFF Conv.RAM', 13, 10
+    db ' 0xB8000-0xBFFFF VGA Buffer', 13, 10
+    db ' 0xC0000-0xFFFFF ROM/BIOS', 13, 10
     db 13, 10
     db 0
 
@@ -240,33 +300,25 @@ str_mem_text:
 ; -
 str_hello_out:
     db 13, 10
-    db '  -', 13, 10
-    db '  |                                                  |', 13, 10
-    db '  |   _   _      _ _         __    __           _    |', 13, 10
-    db '  |  | | | | ___| | | ___   / / /\ \ \___  _ __| |  |', 13, 10
-    db '  |  | |_| |/ _ | | |/ _ \  \ \/  \/ / _ \| |  | |  |', 13, 10
-    db '  |  |  _  |  __/ | | (_) |  \  /\  / (_) | |  | |  |', 13, 10
-    db '  |  |_| |_|\___|_|_|\___/    \/  \/ \___/|_|  |_|  |', 13, 10
-    db '  |                                                  |', 13, 10
-    db '  |    Hello World from NatureOS v2.0                |', 13, 10
-    db '  |    Booted on bare metal. No OS beneath us.       |', 13, 10
-    db '  |                                                  |', 13, 10
-    db '  -', 13, 10
+    db '  Hello World from NatureOS v2.0', 13, 10
+    db '  Booted on bare metal. No OS beneath us.', 13, 10
     db 13, 10
     db 0
+
 
 ; -
 ; Banner
 ; -
 str_banner:
     db 13, 10
-    db '   ___  _                 _        ___  ___', 13, 10
-    db '  / __\| | __ _ _   _  __| | ___  /___\/ __\', 13, 10
-    db ' / /   | |/ _` | | | |/ _` |/ _ \//  // /', 13, 10
-    db '/ /___ | | (_| | |_| | (_| |  __// \_// /___', 13, 10
-    db '\____/ |_|\__,_|\__,_|\__,_|\___|\___/\____/', 13, 10
+    db '     ', 219,219,219,187, '   ', 219,219,187, ' ', 219,219,219,219,219,187, ' ', 219,219,219,219,219,219,219,219,187, 219,219,187, '   ', 219,219,187, 219,219,219,219,219,219,187, ' ', 219,219,219,219,219,219,219,187, ' ', 219,219,219,219,219,219,187, ' ', 219,219,219,219,219,219,219,187, 13, 10
+    db '     ', 219,219,219,219,187, '  ', 219,219,186, 219,219,201,205,205,219,219,187, 200,205,205,219,219,201,205,205,188, 219,219,186, '   ', 219,219,186, 219,219,201,205,205,219,219,187, 219,219,201,205,205,205,205,188, 219,219,201,205,205,205,219,219,187, 219,219,201,205,205,205,205,188, 13, 10
+    db '     ', 219,219,201,219,219,187, ' ', 219,219,186, 219,219,219,219,219,219,219,186, '   ', 219,219,186, '   ', 219,219,186, '   ', 219,219,186, 219,219,219,219,219,219,201,188, 219,219,219,219,219,187, '  ', 219,219,186, '   ', 219,219,186, 219,219,219,219,219,219,219,187, 13, 10
+    db '     ', 219,219,186, 200,219,219,187, 219,219,186, 219,219,201,205,205,219,219,186, '   ', 219,219,186, '   ', 219,219,186, '   ', 219,219,186, 219,219,201,205,205,219,219,187, 219,219,201,205,205,188, '  ', 219,219,186, '   ', 219,219,186, 200,205,205,205,205,219,219,186, 13, 10
+    db '     ', 219,219,186, ' ', 200,219,219,219,219,186, 219,219,186, '  ', 219,219,186, '   ', 219,219,186, '   ', 200,219,219,219,219,219,219,201,188, 219,219,186, '  ', 219,219,186, 219,219,219,219,219,219,219,187, 200,219,219,219,219,219,219,201,188, 219,219,219,219,219,219,219,186, 13, 10
+    db '     ', 200,205,188, '  ', 200,205,205,205,188, 200,205,188, '  ', 200,205,188, '   ', 200,205,188, '    ', 200,205,205,205,205,205,188, ' ', 200,205,188, '  ', 200,205,188, 200,205,205,205,205,205,205,188, ' ', 200,205,205,205,205,205,188, ' ', 200,205,205,205,205,205,205,188, 13, 10
     db 13, 10
-    db '            v2.0  |  Real-Mode x86  |  2026', 13, 10
+    db '                              v2.0  |  Real-Mode x86  |  2026', 13, 10
     db 0
 
 ; -
@@ -275,7 +327,6 @@ str_banner:
 str_motd:
     db 13, 10
     db ' Welcome to NatureOS v2.0.  Type "help" for commands.', 13, 10
-    db ' calc supports signed arithmetic: -32768 to 32767.', 13, 10
     db 13, 10
     db 0
 

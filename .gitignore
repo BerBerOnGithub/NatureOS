@@ -1,5 +1,6 @@
 # Build outputs
 build/
+natureos.iso
 claudeos.iso
 data.img
 

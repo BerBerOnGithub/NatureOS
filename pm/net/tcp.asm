@@ -38,7 +38,7 @@ TCP_EPHEM_PORT  equ 0xC000
 TCP_WIN_SIZE    equ 8192
 
 ; [FIX6] Raised from 2,000,000 - internet SYN-ACK via SLIRP needs more time
-TCP_POLL_LIMIT  equ 20000000
+TCP_POLL_LIMIT  equ 4000000
 
 TCP_STATE_CLOSED      equ 0
 TCP_STATE_SYN_SENT    equ 1
@@ -397,30 +397,6 @@ tcp_send_segment:
     mov  [TCP_TX_BUF + 16], ax
     pop  ecx
 
-    ; DBG: print TX segment info
-    push eax
-    push esi
-    mov  esi, tcp_dbg_tx
-    call term_puts
-    ; flags
-    mov  al, [tcp_tx_flags]
-    movzx eax, al
-    call pm_print_hex32
-    mov  esi, tcp_dbg_seq
-    call term_puts
-    mov  eax, [tcp_snd_nxt]
-    call pm_print_hex32
-    mov  esi, tcp_dbg_ack
-    call term_puts
-    mov  eax, [tcp_rcv_nxt]
-    call pm_print_hex32
-    mov  esi, tcp_dbg_csum
-    call term_puts
-    movzx eax, word [TCP_TX_BUF + 16]
-    call pm_print_hex32
-    call term_newline
-    pop  esi
-    pop  eax
 
     mov  esi, TCP_TX_BUF
     mov  eax, [tcp_dst_ip]
@@ -532,8 +508,17 @@ tcp_poll_one:
     push esi
     push edi
 
+    inc  dword [net_poll_throttle]
+    test dword [net_poll_throttle], 0x3FF
+    jnz  .skip_hw
+    call mouse_poll
+    call pm_kb_poll
+    call wm_update_contents
+    call gfx_flush
+.skip_hw:
+
     call eth_recv
-    jc   .done
+    jc   .empty
 
     ; [FIX2b] Save the eth payload pointer (ESI = eth_rx_buf+14 = IP header start)
     ; immediately before anything can clobber it.  Used later to locate TCP payload.
@@ -631,29 +616,6 @@ tcp_poll_one:
     jmp  .done
 .not_rst:
 
-    ; DBG: print accepted packet: flags, seq, ack, datalen
-    push eax
-    push esi
-    mov  esi, tcp_dbg_rx
-    call term_puts
-    mov  al, [tcp_rx_flags]
-    movzx eax, al
-    call pm_print_hex32
-    mov  esi, tcp_dbg_seq
-    call term_puts
-    mov  eax, [tcp_rx_seq]
-    call pm_print_hex32
-    mov  esi, tcp_dbg_ack
-    call term_puts
-    mov  eax, [tcp_rx_ack]
-    call pm_print_hex32
-    mov  esi, tcp_dbg_dlen
-    call term_puts
-    mov  eax, [tcp_rx_data_len]
-    call pm_print_hex32
-    call term_newline
-    pop  esi
-    pop  eax
 
     cmp  byte [tcp_state], TCP_STATE_SYN_SENT
     je   .state_syn_sent
@@ -781,6 +743,8 @@ tcp_poll_one:
     mov  bl, TCP_FLAG_ACK
     call tcp_send_segment
 
+.empty:
+    pause
 .done:
     pop  edi
     pop  esi
@@ -1168,3 +1132,4 @@ tcp_dbg_drop_ip:    db ' DROP> src IP=', 0
 tcp_dbg_drop_port:  db ' DROP> port mismatch', 0
 tcp_dbg_drop_flags: db ' DROP> not SYN+ACK, flags=', 0
 tcp_dbg_drop_ack:   db ' DROP> ACK mismatch want=', 0
+net_poll_throttle: dd 0
