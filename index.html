@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NatureOS</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
   <style>
@@ -56,7 +57,8 @@
       padding: 0 32px; height: 52px;
     }
     .nav-brand { font-family: var(--mono); font-size: 0.9rem; color: var(--green); display: flex; align-items: center; gap: 8px; }
-    .nav-brand::before { content: '❯'; opacity: 0.5; font-size: 0.75rem; }
+    .nav-brand svg { height: 24px; width: auto; }
+    .nav-brand::before { display: none; }
     .nav-links { display: flex; gap: 28px; }
     .nav-links a { font-size: 0.82rem; color: var(--text-dim); letter-spacing: 0.04em; }
     .nav-links a:hover { color: var(--green); text-decoration: none; }
@@ -166,11 +168,11 @@
     .card p { font-size: 0.82rem; margin: 0; }
 
     /* TABLE */
-    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
-    th { text-align: left; padding: 8px 12px; color: var(--green-dim); font-weight: 500; border-bottom: 1px solid var(--border2); font-family: var(--mono); font-size: 0.78rem; }
-    td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); vertical-align: top; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin-bottom: 16px; }
+    th { text-align: left; padding: 10px 14px; color: var(--green-dim); font-weight: 600; border-bottom: 2px solid var(--border2); font-family: var(--mono); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text-dim); vertical-align: top; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(74,222,128,0.02); }
+    tr:hover td { background: rgba(74,222,128,0.03); }
 
     /* CODE */
     code { font-family: var(--mono); background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; font-size: 0.82em; color: var(--green-dim); }
@@ -235,7 +237,22 @@
 <body>
 
 <nav>
-  <div class="nav-brand">NatureOS</div>
+  <div class="nav-brand">
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="100" cy="100" r="88" fill="#1b4332"/>
+      <circle cx="100" cy="100" r="88" fill="none" stroke="#2d6a4f" stroke-width="2.5"/>
+      <circle cx="100" cy="100" r="78" fill="none" stroke="#52b788" stroke-width="1" opacity="0.5"/>
+      <path d="M100 32 C132 56 140 88 100 122 C60 88 68 56 100 32 Z" fill="#52b788"/>
+      <line x1="100" y1="35" x2="100" y2="120" stroke="#1b4332" stroke-width="1.4" stroke-linecap="round"/>
+      <polyline points="100,124 100,140 84,140 84,156" fill="none" stroke="#40916c" stroke-width="1.2" stroke-linecap="round"/>
+      <polyline points="100,140 116,140 116,156" fill="none" stroke="#40916c" stroke-width="1.2" stroke-linecap="round"/>
+      <circle cx="74" cy="172" r="3" fill="#74c69d"/>
+      <circle cx="94" cy="172" r="3" fill="#74c69d"/>
+      <circle cx="106" cy="172" r="3" fill="#74c69d"/>
+      <circle cx="126" cy="172" r="3" fill="#74c69d"/>
+    </svg>
+    NatureOS
+  </div>
   <div class="nav-links">
     <a href="#changelog">Changelog</a>
     <a href="#start">Getting Started</a>
