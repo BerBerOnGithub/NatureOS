@@ -13,9 +13,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      channel: ${{ steps.version.outputs.channel }}
-      tag:     ${{ steps.version.outputs.tag }}
+      version:   ${{ steps.version.outputs.version }}
+      channel:   ${{ steps.version.outputs.channel }}
+      tag:       ${{ steps.version.outputs.tag }}
+      ver_short: ${{ steps.version.outputs.ver_short }}
 
     steps:
       - name: Checkout repository
@@ -29,12 +30,14 @@ jobs:
       - name: Read version from version.inc
         id: version
         run: |
-          VERSION=$(grep '%define OS_BUILD' include/version.inc | grep -oP '".*?"' | tr -d '"')
+          VERSION=$(grep '%define OS_VERSION ' include/version.inc | grep -oP '".*?"' | tr -d '"')
           CHANNEL=$(grep '%define RELEASE_CHANNEL' include/version.inc | grep -oP '".*?"' | tr -d '"')
+          VER_SHORT=$(grep '%define OS_VER_SHORT' include/version.inc | grep -oP '".*?"' | tr -d '"')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION ($CHANNEL)"
+          echo "ver_short=$VER_SHORT" >> $GITHUB_OUTPUT
+          echo "Detected version: $VER_SHORT ($CHANNEL)"
 
       - name: Build ISO and data.img
         run: make all
@@ -56,7 +59,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "NatureOS v${{ steps.version.outputs.version }}"
+          name: ${{ steps.version.outputs.ver_short }}
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.tag }}
           body: |
             ${{ steps.changelog.outputs.body }}
