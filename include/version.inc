@@ -12,6 +12,7 @@
 %define OS_AUTHOR        "Ethereal Software"
 %define OS_ARCH_RM       "x86 16-bit"
 %define OS_ARCH_PM       "32-bit Protected Mode"
+%define RELEASE_CHANNEL  "stable"
 
 ; Filesystem Names
 %define FS_NAME          "NatureFS"
