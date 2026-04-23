@@ -1,9 +1,8 @@
 ## What's new
 
-- Optimized network stack
-Browser:
-	- Added DNS support
-	- Added basic HTML syntax support
+Window Manager:
+	- Added drop shadow
+	- Implemented actual Z layering
 
 
 
