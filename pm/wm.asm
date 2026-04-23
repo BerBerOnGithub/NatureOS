@@ -719,7 +719,7 @@ wm_draw_dirty:
     mov  byte [si_dirty], 0
     call cursor_save_bg
     call cursor_draw
-    call gfx_flush
+    call gfx_flush_full
 .dd_done:
     popa
     ret
