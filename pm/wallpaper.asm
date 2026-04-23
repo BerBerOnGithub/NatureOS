@@ -233,7 +233,6 @@ wallpaper_draw:
     call fb_fill_rect
 
 .done:
-    call wm_draw_sysinfo            ; draw stats panel over wallpaper, under windows
     popa
     ret
 

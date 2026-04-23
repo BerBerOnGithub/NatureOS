@@ -625,7 +625,10 @@ wm_draw_dirty:
     jmp  .chk_loop
 .chk_done:
     cmp  byte [wm_any_dirty], 0
+    jne  .dd_do_redraw
+    cmp  byte [si_dirty], 0
     je   .dd_done               ; nothing dirty, skip
+.dd_do_redraw:
     ; at least one window dirty - do full redraw
     ; (desktop must be redrawn to erase old content under windows)
     call cursor_erase
@@ -712,6 +715,8 @@ wm_draw_dirty:
     inc  dword [wm_i]
     jmp  .dd_clr
 .dd_clrdone:
+    ; clear sysinfo dirty flag after redraw
+    mov  byte [si_dirty], 0
     call cursor_save_bg
     call cursor_draw
     call gfx_flush
@@ -2105,9 +2110,8 @@ inc  dword [sw_rtc_secs]
 .no_rtc_tick:
 ; update clock only per second
 call wm_draw_taskbar_clock
-; redraw desktop layer once per second to clear sysinfo watermark area
-; (sysinfo text is transparent and needs a fresh background each second)
-call wm_draw_desktop
+; invalidate sysinfo region so wm_draw_dirty clears it next frame
+mov  byte [si_dirty], 1
 .no_clock:
 pop  eax
 
@@ -2297,6 +2301,14 @@ wm_d2:
 wm_draw_sysinfo:
     pusha
 
+    ; clear sysinfo background area to erase old digits/text
+    mov  eax, 470
+    mov  ebx, 4
+    mov  ecx, 162
+    mov  edx, 60
+    mov  esi, WM_C_DESK
+    call fb_fill_rect
+
     mov  dword [si_y], 8
 
     ; Line 1: header
@@ -2304,7 +2316,7 @@ wm_draw_sysinfo:
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x0B
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     add  dword [si_y], 11
 
@@ -2313,7 +2325,7 @@ wm_draw_sysinfo:
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x07
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     mov  eax, [si_uptime_secs]
     mov  edi, si_numbuf
@@ -2325,7 +2337,7 @@ wm_draw_sysinfo:
     mov  ebx, 544
     mov  ecx, [si_y]
     mov  dl,  0x0F
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     add  dword [si_y], 11
 
@@ -2334,7 +2346,7 @@ wm_draw_sysinfo:
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x07
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     ; Read CMOS 0x34/0x35: 64KB blocks above 16MB
     mov  al, 0x34
@@ -2385,7 +2397,7 @@ wm_draw_sysinfo:
     mov  ebx, 544
     mov  ecx, [si_y]
     mov  dl,  0x0F
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     add  dword [si_y], 11
 
@@ -2394,7 +2406,7 @@ wm_draw_sysinfo:
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x07
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     mov  eax, [fsd_used]
     mov  edi, si_numbuf
@@ -2404,7 +2416,7 @@ wm_draw_sysinfo:
     mov  ebx, 544
     mov  ecx, [si_y]
     mov  dl,  0x0F
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     add  dword [si_y], 11
 
@@ -2436,7 +2448,7 @@ wm_draw_sysinfo:
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x07
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
     mov  eax, [si_tmp]
     shr  eax, 1
@@ -2456,7 +2468,7 @@ wm_draw_sysinfo:
     mov  ebx, 544
     mov  ecx, [si_y]
     mov  dl,  0x0A
-    mov  dh,  0xFF
+    mov  dh,  WM_C_DESK
     call fb_draw_string
 
     ; mark sysinfo region dirty so gfx_flush picks it up
@@ -2510,6 +2522,8 @@ si_write_dec:
 ; sysinfo data
 si_y:           dd 0
 si_uptime_secs: dd 0
+si_dirty:       db 0
+                db 0
 si_numbuf:      times 20 db 0
 si_str_hdr:     db 'System Info', 0
 si_str_uptime:  db 'Uptime: ', 0
