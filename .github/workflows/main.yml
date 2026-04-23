@@ -12,10 +12,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     outputs:
-      version:   ${{ steps.version.outputs.version }}
-      channel:   ${{ steps.version.outputs.channel }}
-      tag:       ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      tag: ${{ steps.version.outputs.tag }}
       ver_short: ${{ steps.version.outputs.ver_short }}
 
     steps:
@@ -27,17 +28,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm xorriso python3
 
-      - name: Read version from version.inc
+      - name: Read version and build from version.inc
         id: version
         run: |
           VERSION=$(grep '%define OS_VERSION ' include/version.inc | grep -oP '".*?"' | tr -d '"')
           CHANNEL=$(grep '%define RELEASE_CHANNEL' include/version.inc | grep -oP '".*?"' | tr -d '"')
           VER_SHORT=$(grep '%define OS_VER_SHORT' include/version.inc | grep -oP '".*?"' | tr -d '"')
+          OS_BUILD=$(grep '%define OS_BUILD' include/version.inc | grep -oP '".*?"' | tr -d '"')
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
-          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "ver_short=$VER_SHORT" >> $GITHUB_OUTPUT
-          echo "Detected version: $VER_SHORT ($CHANNEL)"
+          echo "build=$OS_BUILD" >> $GITHUB_OUTPUT
+          echo "tag=v$OS_BUILD" >> $GITHUB_OUTPUT
+
+          echo "Detected version: $VER_SHORT ($CHANNEL), build: $OS_BUILD"
 
       - name: Build ISO and data.img
         run: make all
@@ -45,9 +50,9 @@ jobs:
       - name: Verify build artifacts exist
         run: |
           test -f natureos.iso || (echo "ERROR: natureos.iso not found" && exit 1)
-          test -f data.img     || (echo "ERROR: data.img not found"     && exit 1)
+          test -f data.img     || (echo "ERROR: data.img not found" && exit 1)
           echo "natureos.iso: $(du -h natureos.iso | cut -f1)"
-          echo "data.img:     $(du -h data.img     | cut -f1)"
+          echo "data.img:     $(du -h data.img | cut -f1)"
 
       - name: Read changelog
         id: changelog
@@ -56,17 +61,35 @@ jobs:
           cat .github/changelog.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Check if release already exists (by build tag)
+        id: check_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG_NAME" --repo ${{ github.repository }} &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release $TAG_NAME already exists – skipping creation."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
+        if: steps.check_release.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           name: ${{ steps.version.outputs.ver_short }}
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
           body: |
             ${{ steps.changelog.outputs.body }}
+
             ---
             ## Downloads
-            `natureos.iso` | Bootable ISO image
-            `data.img` | Data disk image
+            `natureos.iso` | Bootable ISO image  
+            `data.img`     | Data disk image  
+
             ## Running with QEMU (every feature tested)
             ```
             qemu-system-x86_64 ^
@@ -90,5 +113,3 @@ jobs:
             natureos.iso
             data.img
           prerelease: ${{ steps.version.outputs.channel != 'stable' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
