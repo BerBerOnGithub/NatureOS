@@ -26,69 +26,102 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y nasm xorriso python3
 
-      - name: Read version and build from version.inc
+      - name: Read version and build from version.inc (VERBOSE)
         id: version
         run: |
-          set -e
+          set -euxo pipefail
+
+          echo "=== Reading version.inc ==="
+          cat include/version.inc
+          echo "==========================="
 
           extract() {
-            grep "$1" include/version.inc | grep -oP '".*?"' | tr -d '"' || true
+            grep "$1" include/version.inc | head -n 1 | awk -F'"' '{print $2}' | tr -d '\r'
           }
 
-          VERSION=$(extract '%define OS_VERSION ')
+          VERSION=$(extract '%define OS_VERSION')
           CHANNEL=$(extract '%define RELEASE_CHANNEL')
           VER_SHORT=$(extract '%define OS_VER_SHORT')
           OS_BUILD=$(extract '%define OS_BUILD')
 
-          # Fail if anything important is missing
-          [ -z "$VERSION" ] && echo "Missing OS_VERSION" && exit 1
-          [ -z "$CHANNEL" ] && echo "Missing RELEASE_CHANNEL" && exit 1
-          [ -z "$VER_SHORT" ] && echo "Missing OS_VER_SHORT" && exit 1
-          [ -z "$OS_BUILD" ] && echo "Missing OS_BUILD" && exit 1
+          echo "DEBUG RAW VALUES:"
+          echo "VERSION    = [$VERSION]"
+          echo "CHANNEL    = [$CHANNEL]"
+          echo "VER_SHORT  = [$VER_SHORT]"
+          echo "OS_BUILD   = [$OS_BUILD]"
+
+          # Hard validation
+          if [ -z "$VERSION" ] || [ -z "$CHANNEL" ] || [ -z "$VER_SHORT" ] || [ -z "$OS_BUILD" ]; then
+            echo "ERROR: Missing required version fields"
+            exit 1
+          fi
+
+          TAG="v$OS_BUILD"
+
+          echo "FINAL TAG: $TAG"
 
           {
             echo "version=$VERSION"
             echo "channel=$CHANNEL"
             echo "ver_short=$VER_SHORT"
             echo "build=$OS_BUILD"
-            echo "tag=v$OS_BUILD"
+            echo "tag=$TAG"
           } >> "$GITHUB_OUTPUT"
 
           echo "Detected version: $VER_SHORT ($CHANNEL), build: $OS_BUILD"
 
       - name: Build ISO and data.img
-        run: make all
+        run: |
+          set -euxo pipefail
+          make all
 
       - name: Verify build artifacts exist
         run: |
+          set -euxo pipefail
+
+          echo "Checking artifacts..."
+          ls -lah
+
           test -f natureos.iso || (echo "ERROR: natureos.iso not found" && exit 1)
           test -f data.img     || (echo "ERROR: data.img not found" && exit 1)
-          echo "natureos.iso: $(du -h natureos.iso | cut -f1)"
-          echo "data.img:     $(du -h data.img | cut -f1)"
 
-      - name: Read changelog
+          echo "ISO size: $(du -h natureos.iso | cut -f1)"
+          echo "IMG size: $(du -h data.img | cut -f1)"
+
+      - name: Read changelog (VERBOSE SAFE)
         id: changelog
         run: |
+          set -euxo pipefail
+
+          echo "=== Changelog ==="
+          cat .github/changelog.md
+
           {
             echo "body<<EOF"
             cat .github/changelog.md
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check if release already exists (by build tag)
+      - name: Check if release already exists
         id: check_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euxo pipefail
+
           TAG_NAME="${{ steps.version.outputs.tag }}"
+          echo "Checking release: $TAG_NAME"
+
           if gh release view "$TAG_NAME" --repo ${{ github.repository }} &>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $TAG_NAME already exists – skipping creation."
+            echo "Release already exists"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release does not exist"
           fi
 
       - name: Create GitHub Release
