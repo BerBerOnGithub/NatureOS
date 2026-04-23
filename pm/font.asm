@@ -95,26 +95,24 @@ fb_draw_char:
 
     ; test bit 7-col (MSB = leftmost)
     movzx eax, byte [fc_bits]
-    push  eax
-    mov   eax, 7
-    sub   eax, edx
-    bt    dword [esp], eax       ; CF=1 if pixel set
-    add   esp, 4
+    test  al, 10000000b
+    jz    .bg_px
 
-    jc    .fg_px
+.fg_px:
+    mov   al, [fc_fg]
+    mov   [edi + edx], al
+    jmp   .next_col
 
+.bg_px:
     ; background
     cmp   byte [fc_bg], 0xFF
     je    .next_col
     mov   al, [fc_bg]
     mov   [edi + edx], al
-    jmp   .next_col
-
-.fg_px:
-    mov   al, [fc_fg]
-    mov   [edi + edx], al
 
 .next_col:
+    ; shift bitmap left to bring next bit to MSB for next iteration
+    shl   byte [fc_bits], 1
     inc   edx
     jmp   .col
 
