@@ -2105,8 +2105,9 @@ inc  dword [sw_rtc_secs]
 .no_rtc_tick:
 ; update clock only per second
 call wm_draw_taskbar_clock
-; redraw sysinfo widget once per second (transparent over desktop)
-call wm_draw_sysinfo
+; redraw desktop layer once per second to clear sysinfo watermark area
+; (sysinfo text is transparent and needs a fresh background each second)
+call wm_draw_desktop
 .no_clock:
 pop  eax
 
