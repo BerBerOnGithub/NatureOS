@@ -2143,13 +2143,13 @@ mov  [sw_ticks], eax
 ; redraw every 4 ticks (25fps)
 mov  eax, [sw_cs_count]
 and  eax, 0x03
-jnz  .done
+jnz  .sw_done
 .do_redraw:
 mov  dword [wm_i], 0
 .sw_loop:
 mov  ecx, [wm_i]
 cmp  ecx, WM_MAX_WINS
-jge  .done
+jge  .sw_done
 imul edi, ecx, WM_STRIDE
 add  edi, wm_table
 cmp  byte [edi+17], 1
@@ -2164,6 +2164,7 @@ call cursor_draw
 inc  dword [wm_i]
 jmp  .sw_loop
 
+.sw_done:
 .done:
 pop  edi
 pop  ecx
