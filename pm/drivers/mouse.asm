@@ -121,8 +121,8 @@ mouse_poll:
     ; mark OLD cursor region dirty (before erase)
     mov  eax, [mouse_y]
     mov  ebx, eax
-    add  ebx, 15
-    cmp  ebx, 479
+    add  ebx, 16
+    cmp  ebx, 480
     jle  .old_ok
     mov  ebx, 479
 .old_ok:
@@ -177,8 +177,8 @@ mouse_poll:
     ; mark NEW cursor region dirty (after draw)
     mov  eax, [mouse_y]
     mov  ebx, eax
-    add  ebx, 15
-    cmp  ebx, 479
+    add  ebx, 16
+    cmp  ebx, 480
     jle  .new_ok
     mov  ebx, 479
 .new_ok:

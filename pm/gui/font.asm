@@ -46,6 +46,16 @@ fb_draw_char:
     push edx
     push esi
     push edi
+    
+    ; mark region dirty (8 scanlines)
+    push eax
+    push ebx
+    mov  eax, ecx              ; y0
+    mov  ebx, eax
+    add  ebx, 8                ; y1
+    call gfx_mark_dirty
+    pop  ebx
+    pop  eax
     jmp   .start
 .ret:
     ret

@@ -18,24 +18,29 @@
 
 BD_HDR_BASE  equ 0x80000
 BD_MAGIC     equ 0x44464C43
-BD_BOUNCE    equ 0x70000   ; 448KB - above stack, below 1MB, BIOS-visible
+BD_BOUNCE    equ 0x90000   ; 448KB - above stack, below 1MB, BIOS-visible
 BD_DAP       equ 0x7D00    ; just below stub, definitely below 64KB
 BD_STUB      equ 0x7E00    ; stub location - below 64KB, always free RAM
 
-; Offsets within stub for shared variables
-BD_STUB_GDTR equ 0x7F00    ; 6-byte GDTR saved here
-BD_STUB_IDTR equ 0x7F06    ; 6-byte IDTR saved here (right after GDTR)
-BD_STUB_ESP  equ 0x7F10    ; saved 32-bit ESP
+; Saved-state area at 0x500 - free conventional memory above BDA (0x400-0x4FF),
+; never touched by SeaBIOS INT 13h handlers
+BD_STUB_GDTR equ 0x0500    ; 6-byte GDTR saved here
+BD_STUB_IDTR equ 0x0506    ; 6-byte IDTR saved here
+BD_STUB_CR0  equ 0x050C    ; saved 32-bit CR0
+BD_STUB_CR3  equ 0x0510    ; saved 32-bit CR3
+BD_STUB_ESP  equ 0x0514    ; saved 32-bit ESP
 BD_STUB_CMD  equ 0x7F14    ; INT 13h AH value (0x42=read, 0x43=write)
 BD_STUB_DRV  equ 0x7F15    ; drive number
+BD_STUB_IDTMP equ 0x051A   ; 6-byte temp for real-mode IDTR lidt
 
 ; - bios_disk_init -
 bios_disk_init:
     pusha
     mov  byte [bd_ready], 0
-    cmp  dword [BD_HDR_BASE], BD_MAGIC
-    jne  .done
-    mov  al, [BD_HDR_BASE + 20]
+    ; check if a valid filesystem was detected by stage2 (using safe ICA)
+    cmp  byte [0x04F1], FSTYPE_NONE
+    je   .done
+    mov  al, [0x04F0]
     mov  [bd_drive], al
     call bd_install_stub
     mov  byte [bd_ready], 1
@@ -64,7 +69,11 @@ bd_do_int13:
     mov  al, 0xFF
     out  0x21, al
     out  0xA1, al
-    ; save GDTR and IDTR to known addresses (BIOS may clobber them)
+    ; save current CPU state (CR0, CR3, GDTR, IDTR, ESP)
+    mov  eax, cr0
+    mov  [BD_STUB_CR0], eax
+    mov  eax, cr3
+    mov  [BD_STUB_CR3], eax
     sgdt [BD_STUB_GDTR]
     sidt [BD_STUB_IDTR]
     ; save ESP
@@ -74,8 +83,8 @@ bd_do_int13:
     mov  [BD_STUB_CMD], al
     mov  al, [bd_drive]
     mov  [BD_STUB_DRV], al
-    cli
     ; far jump to 16-bit code selector 0x18, offset BD_STUB (< 64KB)
+    ; This will jump to at 0x7E00 (BD_STUB)
     db   0xEA
     dd   BD_STUB
     dw   0x18
@@ -97,9 +106,10 @@ bd_stub_code:
     mov  fs, ax
     mov  gs, ax
     mov  ss, ax
-    ; disable PE
+    ; disable Paging (bit 31) and Protected Mode (bit 0)
+    ; we only clear bits, preserving other hardware flags
     mov  eax, cr0
-    and  eax, 0xFFFFFFFE
+    and  eax, 0x7FFFFFFE
     mov  cr0, eax
     ; far jump to flush pipeline and enter real mode
     ; target: 0x0000:0x7E40 (stub + 0x40)
@@ -116,23 +126,24 @@ bd_stub_code:
     mov  ss, ax
     mov  sp, 0x6C00
     ; load BIOS IVT
-    mov  word  [0x7FF0], 0x03FF
-    mov  dword [0x7FF2], 0x00000000
-    lidt [0x7FF0]
+    mov  word  [0x051A], 0x03FF
+    mov  dword [0x051C], 0x00000000
+    lidt [0x051A]
     sti
     ; call INT 13h
-    mov  ah, [0x7F14]
+    mov  ah, [BD_STUB_CMD]
     xor  al, al
-    mov  dl, [0x7F15]
+    mov  dl, [BD_STUB_DRV]
     mov  si, BD_DAP
     int  0x13
     cli
-    ; reload GDT and IDT (BIOS may have clobbered them)
-    lgdt [0x7F00]           ; BD_STUB_GDTR
-    lidt [0x7F06]           ; BD_STUB_IDTR - restore PM IDT
-    ; re-enable PE
-    mov  eax, cr0
-    or   eax, 1
+    ; reload GDT and IDT
+    lgdt [BD_STUB_GDTR]
+    lidt [BD_STUB_IDTR]
+    ; restore CR3 and CR0
+    mov  eax, [0x0510]      ; BD_STUB_CR3
+    mov  cr3, eax
+    mov  eax, [0x050C]      ; BD_STUB_CR0
     mov  cr0, eax
     ; far jump to 32-bit code selector - target must be < 0x10000
     db   0x66, 0xEA         ; 32-bit far jump (operand size prefix)
@@ -150,7 +161,7 @@ bd_stub_code:
     mov  fs, ax
     mov  gs, ax
     mov  ss, ax
-    mov  esp, [BD_STUB_ESP] ; restore ESP - return addr is on stack
+    mov  esp, [0x0514]     ; BD_STUB_ESP
     mov  al, 0x11
     out  0x20, al
     out  0xA0, al
@@ -202,6 +213,8 @@ bios_disk_read:
     push ebx
     call bd_do_int13
     pop  ebx
+    test ah, ah             ; error check
+    jnz  .err
     push esi
     push ecx
     mov  esi, BD_BOUNCE
@@ -212,6 +225,8 @@ bios_disk_read:
     inc  dword [bd_cur_lba]
     dec  ebx
     jmp  .loop
+.err:
+    stc
 .done:
     pop  edi
     pop  esi
@@ -241,6 +256,7 @@ bios_disk_write:
     rep  movsd
     pop  ecx
     pop  edi
+    add  esi, 512       ; advance source by one sector
     mov  byte  [BD_DAP],    0x10
     mov  byte  [BD_DAP+1],  0
     mov  word  [BD_DAP+2],  1
@@ -328,3 +344,5 @@ bd_ready:    db 0
 bd_drive:    db 0x80
 bd_cmd:      db 0x42
 bd_cur_lba:  dd 0
+bd_dbg_write:  db '[BD] write sector',13,10,0
+bd_dbg_writem: db '[BD] write_multi chunk',13,10,0

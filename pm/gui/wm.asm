@@ -37,7 +37,7 @@
 [BITS 32]
 
 ; - tunables -
-WM_MAX_WINS   equ 4
+WM_MAX_WINS   equ 8
 WM_STRIDE     equ 32
 WM_TITLE_H    equ 18        ; title bar pixel height
 WM_TASKBAR_Y  equ 462       ; 480 - 18
@@ -49,6 +49,7 @@ WM_FILES      equ 2
 WM_HELP       equ 3
 WM_BROWSER    equ 4
 WM_TASKMAN    equ 5
+WM_NOTEPAD    equ 6
 
 ; colours
 WM_C_DESK     equ 0x01      ; dark blue desktop
@@ -64,6 +65,60 @@ WM_C_SHADOW   equ 0x08      ; dark grey shadow
 ; - wm_init -
 wm_init:
     pusha
+
+    pushfd
+    pop  eax
+    mov  ecx, eax
+    xor  eax, 0x200000
+    push eax
+    popfd
+    pushfd
+    pop  eax
+    xor  eax, ecx
+    jz   .no_cpu_brand
+    mov eax, 0x80000000
+    cpuid
+    cmp eax, 0x80000004
+    jb .no_cpu_brand
+    mov eax, 0x80000002
+    cpuid
+    mov [si_cpu_brand], eax
+    mov [si_cpu_brand+4], ebx
+    mov [si_cpu_brand+8], ecx
+    mov [si_cpu_brand+12], edx
+    mov eax, 0x80000003
+    cpuid
+    mov [si_cpu_brand+16], eax
+    mov [si_cpu_brand+20], ebx
+    mov [si_cpu_brand+24], ecx
+    mov [si_cpu_brand+28], edx
+    mov eax, 0x80000004
+    cpuid
+    mov [si_cpu_brand+32], eax
+    mov [si_cpu_brand+36], ebx
+    mov [si_cpu_brand+40], ecx
+    mov [si_cpu_brand+44], edx
+    mov byte [si_cpu_brand+48], 0
+
+    ; trim leading spaces
+    mov esi, si_cpu_brand
+.trim_l:
+    cmp byte [esi], ' '
+    jne .trim_ok
+    inc esi
+    jmp .trim_l
+.trim_ok:
+    mov edi, si_cpu_brand
+.copy:
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    test al, al
+    jnz .copy
+
+.no_cpu_brand:
+
     mov  edi, wm_table
     mov  ecx, (WM_MAX_WINS * WM_STRIDE) / 4
     xor  eax, eax
@@ -404,6 +459,8 @@ wm_draw_all:
     je   .wbrowser
     cmp  byte [edi+16], WM_TASKMAN
     je   .wtaskman
+    cmp  byte [edi+16], WM_NOTEPAD
+    je   .wnotepad
     jmp  .wnext
 .wclock:
     call wm_draw_clock
@@ -419,6 +476,9 @@ wm_draw_all:
     jmp  .wnext
 .wtaskman:
     call taskman_draw
+    jmp  .wnext
+.wnotepad:
+    call notepad_draw
 .wnext:
     inc  dword [wm_i]
     jmp  .wloop
@@ -443,6 +503,7 @@ wm_draw_all:
     jne  .no_sm_all
     call wm_draw_startmenu
 .no_sm_all:
+    call ctx_draw               ; draw context menu on top of everything
     call cursor_save_bg
     call cursor_draw
     call gfx_flush_full
@@ -457,7 +518,12 @@ wm_draw_all:
 ; Call from main loop each frame instead of wm_draw_all.
 wm_draw_dirty:
     pusha
-    ; check if any window is dirty
+    ; check if any window is dirty, or if global UI refresh is needed
+    cmp  byte [gfx_dirty], 1
+    je   .chk_hit
+    cmp  byte [icn_hover_changed], 1
+    je   .chk_hit
+
     xor  eax, eax
     mov  byte [wm_any_dirty], 0
 .chk_loop:
@@ -469,6 +535,7 @@ wm_draw_dirty:
     jne  .chk_next
     cmp  byte [edi+19], 1
     jne  .chk_next
+.chk_hit:
     mov  byte [wm_any_dirty], 1
     jmp  .chk_done
 .chk_next:
@@ -535,6 +602,8 @@ wm_draw_dirty:
     je   .dd_wbrowser
     cmp  byte [edi+16], WM_TASKMAN
     je   .dd_wtaskman
+    cmp  byte [edi+16], WM_NOTEPAD
+    je   .dd_wnotepad
     jmp  .dd_wnext
 .dd_wclock:
     call wm_draw_clock
@@ -551,6 +620,9 @@ wm_draw_dirty:
 .dd_wtaskman:
     call taskman_draw
     jmp  .dd_wnext
+.dd_wnotepad:
+    call notepad_draw
+    jmp  .dd_wnext
 .dd_wnext:
     inc  dword [wm_i]
     jmp  .dd_wloop
@@ -564,6 +636,7 @@ wm_draw_dirty:
     jne  .dd_no_sm
     call wm_draw_startmenu
 .dd_no_sm:
+    call ctx_draw               ; draw context menu on top
 
     ; clear all dirty flags
     mov  dword [wm_i], 0
@@ -578,6 +651,9 @@ wm_draw_dirty:
     jmp  .dd_clr
     
 .dd_clrdone:
+    mov  byte [gfx_dirty], 0
+    mov  byte [icn_hover_changed], 0
+    
     call cursor_save_bg
     call cursor_draw
     call gfx_flush
@@ -657,7 +733,12 @@ wm_open:
     mov  dword [edi+20], wm_s_browser
     jmp  .title_ok
 .t5:
+    cmp  eax, WM_TASKMAN
+    jne  .t6
     mov  dword [edi+20], wm_s_taskman
+    jmp  .title_ok
+.t6:
+    mov  dword [edi+20], wm_s_notepad
 .title_ok:
 
     ; count existing open windows to assign z_order
@@ -1067,6 +1148,58 @@ wm_hit_test:
     pop  eax
     ret
 
+; - wm_update_sm_hover -
+; Updates sm_hover based on mouse coords if sm_open=1.
+; Sets gfx_dirty=1 if hover changed.
+wm_update_sm_hover:
+    pusha
+    cmp  byte [sm_open], 1
+    jne  .no_sm
+    
+    mov  eax, [mouse_x]
+    mov  ebx, [mouse_y]
+    
+    ; check bounds: x in [SM_X, SM_X+SM_W], y in [TASKBAR_Y-SM_H, TASKBAR_Y]
+    cmp  eax, SM_X
+    jl   .miss
+    cmp  eax, SM_X + SM_W
+    jge  .miss
+    
+    mov  ecx, WM_TASKBAR_Y - SM_H
+    cmp  ebx, ecx
+    jl   .miss
+    cmp  ebx, WM_TASKBAR_Y
+    jge  .miss
+    
+    ; which item? y - (menu_top+15) / SM_ITEM_H
+    sub  ebx, ecx
+    sub  ebx, 15                ; offset from first item
+    js   .miss                  ; in header
+    
+    xor  edx, edx
+    mov  eax, ebx
+    mov  ecx, SM_ITEM_H
+    div  ecx                    ; EAX = item index
+    
+    cmp  eax, SM_ITEMS
+    jge  .miss
+    
+    mov  esi, eax               ; ESI = new hover
+    jmp  .check_changed
+    
+.miss:
+    mov  esi, -1
+    
+.check_changed:
+    cmp  esi, [sm_hover]
+    je   .no_sm
+    mov  [sm_hover], esi
+    mov  byte [gfx_dirty], 1
+    
+.no_sm:
+    popa
+    ret
+
 ; - wm_on_click -
 ; In: EAX=mx  EBX=my
 wm_on_click:
@@ -1158,6 +1291,7 @@ wm_on_click:
     call wm_hide_startmenu
     jmp  .done
 .no_sm_click:
+    call ctx_hide               ; ensure context menu is hidden when interacting with windows
     ; - window hit test -
     call wm_hit_test
     jc   .desktop
@@ -1859,7 +1993,11 @@ wm_draw_files:
     cmp  eax, [wm_fy_max]
     jge  .fdone
 
-    ; skip free entries
+    ; Determine how to handle this entry based on FS type
+    cmp  byte [fsd_type], FSTYPE_FAT16
+    je   .fdata_fat16
+
+    ; --- CLFD logic ---
     cmp  dword [esi + 24], FSD_FLAG_USED
     jne  .fdata_next
 
@@ -1878,7 +2016,27 @@ wm_draw_files:
     mov  byte [edi], 0
 .fdata_copy_done:
     pop  esi
+    jmp  .fdata_draw
 
+.fdata_fat16:
+    ; --- FAT16 logic ---
+    mov  al, [esi]
+    test al, al
+    jz   .fdone              ; End of directory
+    cmp  al, 0xE5
+    je   .fdata_next         ; Deleted entry
+    
+    mov  al, [esi + 11]      ; Attribute
+    test al, 0x18            ; Directory or Vol Label?
+    jnz  .fdata_next         ; Skip for now
+
+    ; Translate 8.3 name to null-terminated for display
+    push esi
+    mov  edi, wm_fbuf
+    call fsd_83_to_name
+    pop  esi
+
+.fdata_draw:
     ; draw filename in bright white (writable)
     push esi
     mov  esi, wm_fbuf
@@ -2056,7 +2214,7 @@ wm_update_contents:
     push eax
     push ebx
     mov eax, 0
-    mov ebx, 80
+    mov ebx, 100
     call gfx_mark_dirty
     pop ebx
     pop eax
@@ -2076,7 +2234,7 @@ wm_update_contents:
     
     ; check SysInfo overlap (top-right)
     mov ebx, [edi+4]
-    cmp ebx, 80
+    cmp ebx, 100
     jge .ov_tb
     mov eax, [edi+0]
     add eax, [edi+8]
@@ -2186,56 +2344,57 @@ wm_restore_sysinfo_bg:
     mov eax, 470
     mov ebx, 0
     mov ecx, 170
-    mov edx, 80
-    mov esi, 0x01
+    mov edx, 110
+    mov esi, 0x0A      ; Green Fallback
     call fb_fill_rect
     jmp .done
 
 .wp:
-    mov ebx, 0        ; current y
+    mov  ebx, 0       ; current y
 .yloop:
-    cmp ebx, 80
-    jge .done
+    cmp  ebx, 110
+    jge  .done
 
-    mov eax, 470      ; current x
-.xloop:
-    cmp eax, 640
-    jge .next_y
+    ; Fast blit from wallpaper source (WP_BUF) to shadow buffer (GFX_SHADOW)
+    ; dst = GFX_SHADOW + (y * 640) + 470
+    mov  edi, GFX_SHADOW
+    mov  eax, ebx
+    imul eax, 640
+    add  edi, eax
+    add  edi, 470
 
-    ; calculate source y
-    mov edx, 480
-    sub edx, [wp_h]
-    shr edx, 1        ; pad_top
-    mov ecx, ebx
-    sub ecx, edx      ; ecx = src y
-    jl .pad_px
-    cmp ecx, [wp_h]
-    jge .pad_px
+    ; src = WP_BUF + (y * 640) + 470
+    mov  esi, WP_BUF
+    add  esi, eax
+    add  esi, 470
 
-    cmp eax, [wp_w]
-    jge .pad_px
+    mov  ecx, 170
+    rep  movsb
 
-    ; src valid
-    mov esi, WP_BUF
-    imul ecx, 640
-    add esi, ecx
-    add esi, eax
-    mov cl, [esi]
-    jmp .draw_px
+    inc  ebx
+    jmp  .yloop
 
-.pad_px:
-    mov cl, 0
-
-.draw_px:
-    call fb_set_pixel
-    inc eax
-    jmp .xloop
-
-.next_y:
-    inc ebx
-    jmp .yloop
+.pad_region:
+    ; if wallpaper not loaded, just fill with fallback (Green for debug)
+    mov  eax, 470
+    mov  ebx, 0
+    mov  ecx, 170
+    mov  edx, 110
+    mov  esi, 0x0A      ; Green
+    call fb_fill_rect
 
 .done:
+    popa
+    ret
+
+; fb_draw_string_right
+; ESI=str, EBX=right_x, ECX=y, DL=fg, DH=bg
+fb_draw_string_right:
+    pusha
+    call pm_strlen
+    imul eax, 8
+    sub ebx, eax
+    call fb_draw_string
     popa
     ret
 
@@ -2243,13 +2402,13 @@ wm_restore_sysinfo_bg:
 ; wm_draw_sysinfo - transparent live stats panel, top-right of desktop
 ;
 ; No background box. Text drawn directly over restored wallpaper (dh=0xFF transparent).
-; Lines (10px apart, x=474 label / x=544 value):
-;   System Info   (cyan header)
+; Lines (10px apart, x=474 label / right-aligned values limit=634):
+;   System Info   (cyan header, right-aligned)
 ;   Uptime:  NNNs  (incremented each second, no division jitter)
 ;   RAM:     NNNMb  (from BIOS data at 0x413, conventional mem)
 ;   Files:   N      (fsd_used, no hardcoded max)
 ;   Disk:    NNNKb / NNNKb
-;   Scrs:    N
+;   CPU:     Intel ...
 ; -
 wm_draw_sysinfo:
     pusha
@@ -2260,11 +2419,11 @@ wm_draw_sysinfo:
 
     ; Line 1: header
     mov  esi, si_str_hdr
-    mov  ebx, 474
+    mov  ebx, 634
     mov  ecx, [si_y]
     mov  dl,  0x0B
     mov  dh,  0xFF
-    call fb_draw_string
+    call fb_draw_string_right
     add  dword [si_y], 11
 
     ; Line 2: Uptime
@@ -2276,16 +2435,42 @@ wm_draw_sysinfo:
     call fb_draw_string
     mov  eax, [si_uptime_secs]
     mov  edi, si_numbuf
+    
+    ; hours
+    xor  edx, edx
+    mov  ebx, 3600
+    div  ebx
+    push edx
+    call si_write_dec
+    mov  byte [edi], 'h'
+    inc  edi
+    mov  byte [edi], ' '
+    inc  edi
+    
+    ; minutes
+    pop  eax
+    xor  edx, edx
+    mov  ebx, 60
+    div  ebx
+    push edx
+    call si_write_dec
+    mov  byte [edi], 'm'
+    inc  edi
+    mov  byte [edi], ' '
+    inc  edi
+    
+    ; seconds
+    pop  eax
     call si_write_dec
     mov  byte [edi], 's'
     inc  edi
     mov  byte [edi], 0
     mov  esi, si_numbuf
-    mov  ebx, 544
+    mov  ebx, 634
     mov  ecx, [si_y]
     mov  dl,  0x0F
     mov  dh,  0xFF
-    call fb_draw_string
+    call fb_draw_string_right
     add  dword [si_y], 11
 
     ; Line 3: RAM - read CMOS 0x17/0x18 (extended KB) + 640KB conventional
@@ -2341,11 +2526,11 @@ wm_draw_sysinfo:
     inc  edi
     mov  byte [edi], 0
     mov  esi, si_numbuf
-    mov  ebx, 544
+    mov  ebx, 634
     mov  ecx, [si_y]
     mov  dl,  0x0F
     mov  dh,  0xFF
-    call fb_draw_string
+    call fb_draw_string_right
     add  dword [si_y], 11
 
     ; Line 4: Files
@@ -2360,11 +2545,11 @@ wm_draw_sysinfo:
     call si_write_dec
     mov  byte [edi], 0
     mov  esi, si_numbuf
-    mov  ebx, 544
+    mov  ebx, 634
     mov  ecx, [si_y]
     mov  dl,  0x0F
     mov  dh,  0xFF
-    call fb_draw_string
+    call fb_draw_string_right
     add  dword [si_y], 11
 
     ; compute used sectors
@@ -2372,8 +2557,15 @@ wm_draw_sysinfo:
     mov  [si_tmp], eax
     cmp  byte [fsd_ready], 1
     jne  .si_disk_draw
+    
     push esi
     push ecx
+    push ebx
+    
+    cmp  byte [fsd_type], FSTYPE_FAT16
+    je   .si_used_fat16
+
+    ; --- CLFD used space ---
     mov  esi, fsd_dir_buf
     mov  ecx, FSD_MAX_ENT
 .si_used_loop:
@@ -2386,43 +2578,114 @@ wm_draw_sysinfo:
 .si_used_skip:
     add  esi, FSD_ENT_SZ
     loop .si_used_loop
+    jmp  .si_done
+
+.si_used_fat16:
+    ; --- FAT16 used space ---
+    ; We can't easily walk the whole FAT here without performance hit, 
+    ; but we can sum up the file sizes from root dir.
+    ; Note: this doesn't account for cluster slack or fragmented overhead, 
+    ; but gives a similar "used bytes" feel.
+    mov  esi, fsd_dir_buf
+    movzx ecx, word [fsd_hdr_buf + BPB_ROOT_ENTRIES]
+.si_used_fat_lp:
+    mov  al, [esi]
+    test al, al
+    jz   .si_done
+    cmp  al, 0xE5
+    je   .si_next_fat
+    mov  al, [esi + 11]
+    test al, 0x18
+    jnz  .si_next_fat
+    
+    mov  eax, [esi + 28]      ; File size
+    add  eax, 511
+    shr  eax, 9               ; Sectors
+    add  [si_tmp], eax
+.si_next_fat:
+    add  esi, 32
+    loop .si_used_fat_lp
+
+.si_done:
+    pop  ebx
     pop  ecx
     pop  esi
 
     ; Line 5: Disk  NNNKb/NNNKb
 .si_disk_draw:
+    ; Used parts
     mov  esi, si_str_disk
     mov  ebx, 474
     mov  ecx, [si_y]
     mov  dl,  0x07
-    mov  dh,  0xFF
     call fb_draw_string
     mov  eax, [si_tmp]
-    shr  eax, 1
+    shr  eax, 1               ; sectors -> KB
     mov  edi, si_numbuf
     call si_write_dec
     mov  byte [edi], 'K'
     inc  edi
     mov  byte [edi], '/'
     inc  edi
-    mov  eax, [fsd_hdr_buf + 12]
-    shr  eax, 1
+    mov  byte [edi], 0
+    mov  esi, si_numbuf
+    mov  ebx, 560
+    mov  dl,  0x0A
+    call fb_draw_string
+    
+    ; Total size
+    cmp  byte [fsd_type], FSTYPE_FAT16
+    je   .si_total_fat
+    mov  eax, [fsd_hdr_buf + 12]  ; CLFD total sectors
+    jmp  .si_total_draw
+.si_total_fat:
+    movzx eax, word [fsd_hdr_buf + 19] ; BPB_TotSec16
+    test eax, eax
+    jnz  .si_total_draw
+    mov  eax, [fsd_hdr_buf + 32]       ; BPB_TotSec32
+.si_total_draw:
+    shr  eax, 1               ; sectors -> KB
+    mov  edi, si_numbuf
     call si_write_dec
     mov  byte [edi], 'K'
     inc  edi
     mov  byte [edi], 0
     mov  esi, si_numbuf
-    mov  ebx, 544
-    mov  ecx, [si_y]
-    mov  dl,  0x0A
-    mov  dh,  0xFF
+    mov  ebx, 634
+    mov  dl,  0x0F
+    call fb_draw_string_right
+    add  dword [si_y], 11
+
+    cmp byte [si_cpu_brand], 0
+    je .skip_cpu
+
+    ; dynamically right-align "CPU:" + brand string
+    mov esi, si_cpu_brand
+    call pm_strlen
+    add eax, 4             ; length of "CPU:" is 4
+    imul eax, 8
+    mov ebx, 634
+    sub ebx, eax           ; EBX = left starting position for combined string
+
+    push ebx
+    mov esi, si_str_cpu
+    mov ecx, [si_y]
+    mov dl, 0x07
     call fb_draw_string
+    pop ebx
+    
+    add ebx, 32            ; offset by 4 chars for the brand text
+    mov esi, si_cpu_brand
+    mov dl, 0x0F
+    call fb_draw_string
+    add dword [si_y], 11
+.skip_cpu:
 
     ; mark sysinfo region dirty so gfx_flush picks it up
     push eax
     push ebx
     xor  eax, eax
-    mov  ebx, 88
+    mov  ebx, 110
     call gfx_mark_dirty
     pop  ebx
     pop  eax
@@ -2546,6 +2809,7 @@ wm_s_files:      db 'Files', 0
 wm_s_help:       db 'About ', OS_NAME, 0
 wm_s_browser:    db 'Simple Browser', 0
 wm_s_taskman:    db 'Task Manager', 0
+wm_s_notepad:    db 'Notepad', 0
 
 ; Help window content
 wm_s_help_title: db OS_NAME, '  Build ', OS_BUILD, 0

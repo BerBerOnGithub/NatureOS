@@ -1,26 +1,23 @@
 ## What's new
 
-Window Manager:
 
-* Added drop shadow to windows
-* Implement actual Z layering
-* Added date to taskbar
 
 System:
 
-* PC Speaker support added to Protected Mode
-* Updated SDK
-* Improved filesystem search
+* Migrated data disk from proprietary CLFD to FAT16
+* Added basic ACPI support
 
-Bugfixes:
 
-* Fixed UI rendering glitches
-* Fixed timer and beep inaccuracies
-* Fixed filesystem mismatch issues
+
+GUI:
+
+* Added Context Menu
+
+
 
 Apps:
 
-* Added TASK MANAGER
+* Added Notepad
 
 
 

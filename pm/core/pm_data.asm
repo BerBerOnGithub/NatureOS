@@ -30,7 +30,19 @@ pm_probe_cols:  dd 0
 gfx_dirty:   db 0
 scr_pending: db 0
 si_total_mb: dd 0
+wp_loaded:   db 0
 si_tmp:      dq 0
+si_cpu_brand: times 49 db 0
+
+; - Command History -
+PM_HIST_COUNT equ 16
+PM_HIST_LEN   equ 128
+pm_hist_buffer: times PM_HIST_COUNT * PM_HIST_LEN db 0
+pm_hist_head:   dd 0         ; Index where NEXT command will be saved (0-15)
+pm_hist_view:   dd 0         ; Index currently being viewed during browsing
+pm_hist_num:    dd 0         ; Number of valid entries (0-16)
+pm_hist_active: db 0         ; 1 if browsing history, 0 if typing new line
+pm_hist_temp:   times PM_HIST_LEN db 0 ; Save current line here while browsing
 
 ; -
 ; PS/2 scan code +' ASCII tables
@@ -82,36 +94,39 @@ pm_prompt:          db 'PM> ', 0
 pm_str_cmd_help:    db 'help', 0
 pm_str_cmd_clear:   db 'clear', 0
 pm_str_cmd_exit:    db 'exit', 0
-pm_str_pfx_echo:    db 'echo ', 0
-pm_str_pfx_calc:    db 'calc ', 0
+pm_str_cmd_notepad: db 'notepad', 0
+pm_str_pfx_echo:    db 'echo', 0
+pm_str_pfx_calc:    db 'calc', 0
 pm_str_cmd_probe:   db 'probe', 0
 pm_str_cmd_drivers: db 'drivers', 0
 pm_str_cmd_pci:     db 'pci', 0
 pm_str_cmd_ifconfig: db 'ifconfig', 0
 pm_str_cmd_arp:      db 'arp', 0
-pm_str_pfx_arping:   db 'arping ', 0
-pm_str_pfx_ping:     db 'ping ', 0
+pm_str_pfx_arping:   db 'arping', 0
+pm_str_pfx_ping:     db 'ping', 0
 pm_str_cmd_term:     db 'term', 0
 pm_str_cmd_helpwin:  db 'helpwin', 0
 pm_str_cmd_sw:       db 'stopwatch', 0
-pm_str_pfx_timer:    db 'timer ', 0
+pm_str_pfx_timer:    db 'timer', 0
 pm_str_cmd_files:    db 'files', 0
 pm_str_sw_reset:     db 'reset', 0
 pm_str_timer_usage:  db 'Usage: timer MM:SS', 0
 pm_str_cmd_savescr:  db 'savescr', 0
-pm_str_pfx_dns:      db 'dns ', 0
-pm_str_pfx_tcpget:   db 'tcpget ', 0
+pm_str_pfx_dns:      db 'dns', 0
+pm_str_pfx_tcpget:   db 'tcpget', 0
 pm_str_cmd_ls:       db 'ls', 0
-pm_str_pfx_cat:      db 'cat ', 0
-pm_str_pfx_rm:       db 'rm ', 0
-pm_str_pfx_hexdump:  db 'hexdump ', 0
+pm_str_pfx_cat:      db 'cat', 0
+pm_str_pfx_rm:       db 'rm', 0
+pm_str_pfx_hexdump:  db 'hexdump', 0
 pm_str_cmd_bioscall: db 'bioscall', 0
 pm_str_cmd_sysinfo:  db 'sysinfo', 0
 pm_str_cmd_browser:  db 'browser', 0
-pm_str_pfx_beep:     db 'beep ', 0
-pm_str_pfx_wp:       db 'wp ', 0
-pm_str_cmd_taskman:  db 'taskman', 0
+pm_str_pfx_beep:     db 'beep', 0
+pm_str_pfx_wp:       db 'wp', 0
+pm_str_cmd_taskman:    db 'taskman', 0
+pm_str_cmd_shutdown: db 'shutdown', 0
 pm_str_beep_usage:   db 'Usage: beep <freq_hz> <duration_ticks>', 13, 10, 0
+si_str_cpu:          db 'CPU:', 0
 
 ; Window manager strings
 pm_str_wm_full:      db 'Max windows open (close one first).', 0
@@ -150,7 +165,7 @@ pm_str_help_text:
     db ' | tcpget <ip> <p> <path>| HTTP GET via TCP           |', 13, 10
     db ' | stopwatch            | stopwatch window           |', 13, 10
     db ' | timer MM:SS          | countdown timer            |', 13, 10
-    db ' | term / files         | open window                |', 13, 10
+    db ' | term / files / notepad | open window                |', 13, 10
     db ' | ls                   | list files                 |', 13, 10
     db ' | cat <name>           | print file contents        |', 13, 10
     db ' | rm <name>            | delete file                |', 13, 10
@@ -159,6 +174,7 @@ pm_str_help_text:
     db ' | sysinfo              | show system information    |', 13, 10
     db ' | wp <name>            | set desktop wallpaper      |', 13, 10
     db ' | taskman              | open task manager          |', 13, 10
+    db ' | shutdown             | power off system via ACPI  |', 13, 10
     db ' | exit                 | return to real mode        |', 13, 10
     db ' +----------------------+----------------------------+', 13, 10, 10, 0
 

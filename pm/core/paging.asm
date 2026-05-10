@@ -16,36 +16,38 @@
 ;
 ; This region is above the e1000 buffers (0x11A000) and well below the
 ; wallpaper buffer (0x200000). This avoids overlapping with the FS blob
-; which is loaded at 0x20000 and can be up to 800KB (ends at ~0xE3000).
+; which is loaded at 0x30000 and can be up to 800KB (ends at ~0xF8000).
 ; ===========================================================================
 [BITS 32]
 
-PAGE_DIR      equ 0x120000
-PAGE_TBL_0    equ 0x121000
-PAGE_TBL_1    equ 0x122000
-PAGE_TBL_2    equ 0x123000
-PAGE_TBL_3    equ 0x124000
-PAGE_TBL_VBE  equ 0x125000
-PAGE_TBL_E1000 equ 0x126000
+PAGE_DIR      equ 0x1000000    ; 16MB
+PAGE_TBL_0    equ 0x1001000      ; Start of 64 contiguous tables
+                                ; Tables 0-63 map 0x00000000 to 0x0FFFFFFF (256MB)
+PAGE_TBL_VBE   equ 0x1041000
+PAGE_TBL_E1000 equ 0x1042000
 
 paging_init:
     pusha
 
-    ; 0. Zero out all 7 pages (28KB) at 0x120000
+    ; 0. Zero out all 67 pages (268KB) starting at 16MB
     mov  edi, PAGE_DIR
-    mov  ecx, (7 * 4096) / 4    ; 7168 dwords
+    mov  ecx, (67 * 4096) / 4
     xor  eax, eax
     rep  stosd
 
-    ; 1. Link Page Directory entries 0..3 to Page Tables 0..3
-    mov  dword [PAGE_DIR + 0*4], PAGE_TBL_0 | 0x03
-    mov  dword [PAGE_DIR + 1*4], PAGE_TBL_1 | 0x03
-    mov  dword [PAGE_DIR + 2*4], PAGE_TBL_2 | 0x03
-    mov  dword [PAGE_DIR + 3*4], PAGE_TBL_3 | 0x03
+    ; 1. Link Page Directory entries 0..63 to Page Tables 0..63
+    mov  ecx, 64
+    mov  edi, PAGE_DIR
+    mov  eax, PAGE_TBL_0 | 0x03
+.dir_loop:
+    mov  [edi], eax
+    add  eax, 4096              ; next table address
+    add  edi, 4
+    loop .dir_loop
 
-    ; 2. Fill Page Tables 0..3 with identity map (virtual == physical)
-    ; 4 tables * 1024 entries = 4096 entries (maps 16MB)
-    mov  ecx, 4096
+    ; 2. Fill Page Tables 0..63 with identity map (virtual == physical)
+    ; 64 tables * 1024 entries = 65536 entries (maps 256MB)
+    mov  ecx, 65536
     mov  edi, PAGE_TBL_0
     mov  eax, 0x03              ; phys 0x000000 | Present | R/W
 .fill_loop:

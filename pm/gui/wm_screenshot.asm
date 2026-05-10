@@ -27,9 +27,9 @@ scr_counter_init:
 ; -
 wm_screenshot_capture:
     pusha
-    ; Copy GFX_SHADOW (0x500000) to SCR_CAPTURE (0x600000)
-    mov  esi, 0x500000
-    mov  edi, 0x600000
+    ; Copy GFX_SHADOW (0x1400000) to SCR_CAPTURE (0x1500000)
+    mov  esi, 0x1400000
+    mov  edi, 0x1500000
     mov  ecx, 307200 / 4
     rep  movsd
     

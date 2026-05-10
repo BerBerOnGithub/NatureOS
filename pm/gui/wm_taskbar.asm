@@ -336,6 +336,10 @@ wm_draw_startmenu:
     inc  dword [wm_i]
     jmp  .item_loop
 .done:
+    ; mark Start Menu region dirty for gfx_flush
+    mov  eax, WM_TASKBAR_Y - SM_H
+    mov  ebx, WM_TASKBAR_Y
+    call gfx_mark_dirty
     popa
     ret
 

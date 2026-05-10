@@ -4,7 +4,7 @@
 ; ls        - list all files
 ; run <n>   - execute a file by name
 ;
-; FS blob loaded at physical 0x20000 = segment 0x2000, offset 0.
+; FS blob loaded at physical 0x30000 = segment 0x3000, offset 0.
 ;
 ; ', FS_NAME, ' layout (little-endian):
 ;   +0   4 bytes  magic "', FS_MAGIC, '"
@@ -16,7 +16,7 @@
 ;       +20  4 bytes  file size in bytes (uint32)
 ; ===========================================================================
 
-FS_SEG      equ 0x2000
+FS_SEG      equ 0x3000
 ENTRY_SIZE  equ 24
 NAME_LEN    equ 16
 DIR_OFFSET  equ 6

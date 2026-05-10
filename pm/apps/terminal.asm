@@ -8,7 +8,7 @@
 %define TERM_FG        0x0A
 %define TERM_BG        0x00
 %define TERM_PROMPT_C  0x0B
-%define TERM_MAX_WINS  4
+%define TERM_MAX_WINS  8
 
 ; -
 ; term_init
@@ -285,6 +285,10 @@ term_tick:
     je   .enter
     cmp  al, 8
     je   .backspace
+    cmp  al, 0x80            ; UP
+    je   .up
+    cmp  al, 0x81            ; DOWN
+    je   .down
     cmp  al, 32
     jl   .done
     cmp  al, 127
@@ -309,6 +313,7 @@ term_tick:
     call term_putchar_col
     pop  edx
     mov  byte [term_changed_this_tick], 1
+    mov  byte [pm_hist_active], 0
     jmp  .handle_loop
 
 .backspace:
@@ -345,6 +350,7 @@ term_tick:
     pop  edx
     pop  eax
     mov  byte [term_changed_this_tick], 1
+    mov  byte [pm_hist_active], 0
     jmp  .handle_loop
 
 .enter:
@@ -359,6 +365,12 @@ term_tick:
     mov  eax, [term_input_len + esi]
     mov  byte [edi + eax], 0
     
+    ; save to history
+    push esi
+    mov  esi, edi
+    call pm_hist_save
+    pop  esi
+    
     mov  esi, edi
     mov  edi, pm_input_buf
     
@@ -368,6 +380,7 @@ term_tick:
     mov  [pm_input_len], ecx
     rep  movsb
     mov  byte [edi], 0
+    mov  byte [pm_hist_active], 0
     call pm_exec
     
     mov  ebx, [term_active_id]
@@ -377,12 +390,142 @@ term_tick:
     call term_draw_prompt
     mov  byte [term_changed_this_tick], 1
     jmp  .handle_loop
+
+.up:
+    mov  ebx, [term_active_id]
+    mov  edi, term_input_buf
+    mov  eax, 128
+    imul eax, ebx
+    add  edi, eax
+    mov  esi, edi
+    call pm_hist_up
+    jc   .handle_loop
+    
+    call term_clear_input
+    
+    ; copy from history[view] to term_input_buf[win]
+    pusha
+    mov  eax, [pm_hist_view]
+    imul eax, PM_HIST_LEN
+    add  eax, pm_hist_buffer
+    mov  esi, eax
+    
+    mov  ebx, [term_active_id]
+    mov  edi, term_input_buf
+    mov  ecx, 128
+    imul ecx, ebx
+    add  edi, ecx
+    
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+    
+    ; redraw input
+    jmp  .redraw_input
+
+.down:
+    call pm_hist_down
+    jc   .handle_loop
+    
+    call term_clear_input
+    
+    cmp  byte [pm_hist_active], 0
+    je   .restore_temp
+    
+    ; copy from history[view]
+    pusha
+    mov  eax, [pm_hist_view]
+    imul eax, PM_HIST_LEN
+    add  eax, pm_hist_buffer
+    mov  esi, eax
+    
+    mov  ebx, [term_active_id]
+    mov  edi, term_input_buf
+    mov  ecx, 128
+    imul ecx, ebx
+    add  edi, ecx
+    
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+    jmp  .redraw_input
+
+.restore_temp:
+    pusha
+    mov  esi, pm_hist_temp
+    mov  ebx, [term_active_id]
+    mov  edi, term_input_buf
+    mov  ecx, 128
+    imul ecx, ebx
+    add  edi, ecx
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+
+.redraw_input:
+    mov  ebx, [term_active_id]
+    imul ebx, 4
+    mov  edi, term_input_buf
+    mov  eax, 128
+    shr  ebx, 2              ; back to win id
+    imul eax, ebx
+    add  edi, eax
+    mov  esi, edi
+    call pm_strlen
+    
+    mov  ebx, [term_active_id]
+    imul edx, ebx, 4
+    mov  [term_input_len + edx], eax
+    
+    mov  esi, edi
+    call term_puts
+    mov  byte [term_changed_this_tick], 1
+    jmp  .handle_loop
 .done:
     cmp  byte [term_changed_this_tick], 1
     jne  .no_inval
     mov  ecx, [term_win_id]
     call wm_invalidate
 .no_inval:
+    popa
+    ret
+
+; -
+; term_clear_input
+; Erases the currently typed characters from screen and buffer.
+; -
+term_clear_input:
+    pusha
+    mov  ebx, [term_active_id]
+    imul esi, ebx, 4
+.cl_lp:
+    cmp  dword [term_input_len + esi], 0
+    je   .done
+    
+    dec  dword [term_input_len + esi]
+    dec  dword [term_col + esi]
+    
+    xor  al, al
+    mov  dl, TERM_BG
+    call term_buf_write
+    
+    mov  ebx, [term_active_id]
+    imul esi, ebx, 4
+    mov  ebx, [term_col + esi]
+    shl  ebx, 3
+    add  ebx, [term_cx + esi]
+    
+    mov  ecx, [term_row + esi]
+    shl  ecx, 3
+    add  ecx, [term_cy + esi]
+    
+    mov  al, ' '
+    mov  dl, TERM_BG
+    mov  dh, TERM_BG
+    call fb_draw_char
+    jmp  .cl_lp
+
+.done:
     popa
     ret
 
@@ -570,9 +713,22 @@ term_newline:
     mov  ecx, [term_cw + ebx]
     rep  movsb
     pop  esi
-
     inc  esi
     jmp  .sloop
+
+    ; mark entire terminal client area dirty
+    push eax
+    push ebx
+    push edi
+    mov  edi, [term_active_id]
+    shl  edi, 2
+    mov  eax, [term_cy + edi]
+    mov  ebx, eax
+    add  ebx, [term_ch + edi]
+    call gfx_mark_dirty
+    pop  edi
+    pop  ebx
+    pop  eax
 
 .clrlast:
     mov  ebx, [term_active_id]
@@ -604,17 +760,17 @@ term_newline:
 ; -
 term_active_id:   dd 0
 term_draw_id:     dd 0
-term_col:         times 4 dd 0
-term_row:         times 4 dd 0
-term_input_len:   times 4 dd 0
-term_input_buf:   times 4*128 db 0
+term_col:         times 8 dd 0
+term_row:         times 8 dd 0
+term_input_len:   times 8 dd 0
+term_input_buf:   times 8*128 db 0
 
-term_cx:          times 4 dd 2
-term_cy:          times 4 dd 20
-term_cw:          times 4 dd 476
-term_ch:          times 4 dd 318
-term_cols:        times 4 dd 58
-term_rows:        times 4 dd 39
+term_cx:          times 8 dd 2
+term_cy:          times 8 dd 20
+term_cw:          times 8 dd 476
+term_ch:          times 8 dd 318
+term_cols:        times 8 dd 58
+term_rows:        times 8 dd 39
 
 term_ri:          dd 0
 term_ci:          dd 0

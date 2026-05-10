@@ -1058,9 +1058,9 @@ hex_row_off:    dd 0
 ; -
 ; Shared data
 ; -
-; CAT_BUF_ADDR lives at 0x150000 (fixed RAM, above WP_REMAP at 0x14B000+256)
+; CAT_BUF_ADDR lives at 0x180000 (fixed RAM)
 ; This saves 32KB from the kernel binary.
-CAT_BUF_ADDR equ 0x150000
+CAT_BUF_ADDR equ 0x180000
 
 cat_bytes:     dd 0
 
@@ -1210,6 +1210,31 @@ pm_cmd_wp:
 wp_str_usage: db 'Usage: wp <filename.bmp>', 13, 10, 0
 
 ; ===========================================================================
+; pm_cmd_notepad - Open GUI Notepad
+; ===========================================================================
+pm_cmd_notepad:
+    pusha
+    mov  al,  WM_NOTEPAD
+    mov  ebx, 130
+    mov  ecx, 70
+    mov  edx, 480
+    mov  esi, 320
+    call wm_open
+    jc   .full
+    push ecx
+    call wm_draw_all
+    pop  ecx
+    call notepad_init
+    jmp  .done
+.full:
+    mov  esi, pm_str_wm_full
+    call term_puts
+    call term_newline
+.done:
+    popa
+    ret
+
+; ===========================================================================
 ; pm_cmd_taskman - Open GUI Task Manager
 ; ===========================================================================
 pm_cmd_taskman:
@@ -1222,5 +1247,28 @@ pm_cmd_taskman:
     call wm_open
     popa
     ret
+
+; ===========================================================================
+; pm_cmd_shutdown - Power off the system via ACPI
+; ===========================================================================
+pm_cmd_shutdown:
+    pusha
+    mov  esi, pm_str_shutdown_msg
+    mov  bl, 0x0E
+    call pm_puts
+    call pm_newline
+    
+    call acpi_shutdown
+    
+    ; if we reach here, ACPI shutdown failed
+    mov  esi, pm_str_shutdown_fail
+    mov  bl, 0x0C
+    call pm_puts
+    call pm_newline
+    popa
+    ret
+
+pm_str_shutdown_msg:  db 'Shutting down via ACPI...', 0
+pm_str_shutdown_fail: db 'ACPI shutdown failed or not supported by hardware.', 0
 
 

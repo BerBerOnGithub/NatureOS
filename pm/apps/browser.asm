@@ -1800,7 +1800,7 @@ browser_fetch:
 
 ; - Data -
 browser_url:     times 256 db 0
-browser_content  equ 0x140000
+browser_content  equ 0x24C000
 browser_s_go:    db 'Go', 0
 browser_s_default_url: db '142.250.180.142 80 /', 0
 browser_s_hdr_host:    db 'Host: google.com', 13, 10, 0

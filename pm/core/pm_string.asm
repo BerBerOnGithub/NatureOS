@@ -196,3 +196,59 @@ pm_skip_spaces:
 .done:
     pop  eax
     ret
+
+; -
+; pm_strlen - calculate length of null-terminated string at ESI
+; Returns: EAX = length
+; -
+pm_strlen:
+    push esi
+    push ecx
+    xor  ecx, ecx
+.loop:
+    cmp  byte [esi], 0
+    je   .done
+    inc  esi
+    inc  ecx
+    jmp  .loop
+.done:
+    mov  eax, ecx
+    pop  ecx
+    pop  esi
+    ret
+
+; -
+; pm_cmdmatch - ZF=1 if string at ESI starts with command word at EDI
+; and is immediately followed by a space or null.
+; -
+pm_cmdmatch:
+    push eax
+    push esi
+    push edi
+.loop:
+    mov  al, [edi]
+    or   al, al
+    jz   .check_boundary     ; prefix exhausted
+    cmp  al, [esi]
+    jne  .no
+    inc  esi
+    inc  edi
+    jmp  .loop
+.check_boundary:
+    mov  al, [esi]
+    cmp  al, ' '
+    je   .yes
+    or   al, al
+    jz   .yes
+.no:
+    pop  edi
+    pop  esi
+    pop  eax
+    or   eax, 1              ; ZF=0
+    ret
+.yes:
+    pop  edi
+    pop  esi
+    pop  eax
+    xor  eax, eax            ; ZF=1
+    ret

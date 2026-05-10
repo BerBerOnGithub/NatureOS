@@ -51,6 +51,9 @@ echo [3/6] Assembling kernel...
 "%NASM%" -f bin -o build\kernel.bin kernel.asm
 if errorlevel 1 ( echo FAILED: kernel.asm & exit /b 1 )
 for %%F in (build\kernel.bin) do echo  OK  kernel.bin [%%~zF bytes]
+REM Check kernel fits in stage2's KERNEL_COUNT (80 blocks * 2048 = 163840 bytes)
+powershell -NoProfile -Command "if ((Get-Item 'build\kernel.bin').Length -gt 163840) { Write-Host 'ERROR: kernel.bin exceeds 163840 bytes - will be truncated by stage2!'; exit 1 }"
+if errorlevel 1 ( echo FAILED: kernel too large & exit /b 1 )
 
 echo [4/6] Packing filesystem...
 python mkfs.py
@@ -68,7 +71,7 @@ REM   512-sector 4:   kernel.bin   (2048-LBA 1)
 REM   512-sector 204: fs.bin       (2048-LBA 51)
 set KERNEL_SECTOR=4
 set FS_SECTOR=804
-set FS_SECTORS=1600
+set FS_SECTORS=660
 set /a FLAT_SECTORS=%FS_SECTOR%+%FS_SECTORS%
 set /a FLAT_BYTES=%FLAT_SECTORS%*512
 set /a FS_OFFSET=%FS_SECTOR%*512

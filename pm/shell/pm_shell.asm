@@ -14,7 +14,7 @@ pm_entry:
     mov  fs, ax
     mov  gs, ax
     mov  ss, ax
-    mov  esp, 0x9e000
+    mov  esp, 0x1100000
 
     mov  esi, dbg_msg_1
     call dbg_serial_puts
@@ -89,24 +89,49 @@ pm_entry:
     call mouse_poll
     call pm_kb_poll          ; Drain hardware 8042 into RAM buffer
 
-    ; update icon hover state (for future use)
+    ; update icon hover state
     call icons_hover
+    ; update context menu hover state
+    mov  eax, [mouse_x]
+    mov  ebx, [mouse_y]
+    call ctx_update_hover
+
+    ; update start menu hover state
+    call wm_update_sm_hover
 
     ; check for window manager mouse events
     mov  al, [mouse_btn]
     mov  bl, [pm_prev_btn]
 
+    ; right button just pressed?
+    test al, 0x02
+    jz   .check_left
+    test bl, 0x02
+    jnz  .check_left
+    ; fresh right-click press!
+    mov  eax, [mouse_x]
+    mov  ebx, [mouse_y]
+    call ctx_show
+    jmp  .btn_done
+
+.check_left:
     ; left button just pressed?
     test al, 0x01
     jz   .check_drag
     test bl, 0x01
     jnz  .check_drag        ; was already held
-    ; fresh press ,! check icons first
+    ; fresh press -> check context menu first
+    mov  eax, [mouse_x]
+    mov  ebx, [mouse_y]
+    call ctx_on_click       ; CF=1 if click was inside menu or dismissed it
+    jc   .btn_done
+
+    ; check icons
     mov  eax, [mouse_x]
     mov  ebx, [mouse_y]
     call icons_click
     jc   .btn_done          ; icon handled it
-    mov  eax, [mouse_x]    ; reload ,! icons_click clobbers EAX/EBX
+    mov  eax, [mouse_x]    ; reload
     mov  ebx, [mouse_y]
     call wm_on_click
     jmp  .btn_done
@@ -115,6 +140,8 @@ pm_entry:
     ; left held = drag
     test al, 0x01
     jz   .check_release
+    ; drag dismisses context menu
+    call ctx_hide
     mov  eax, [mouse_x]
     mov  ebx, [mouse_y]
     call wm_on_drag
@@ -136,6 +163,7 @@ pm_entry:
     call wm_update_contents
     call term_tick
     call browser_tick
+    call notepad_tick
     call wm_draw_dirty          ; only redraws windows marked dirty
 
     cmp  byte [scr_pending], 1
@@ -215,12 +243,12 @@ pm_exec:
     ; prefix matches
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_echo
-    call pm_startswith
+    call pm_cmdmatch
     je   .echo
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_calc
-    call pm_startswith
+    call pm_cmdmatch
     je   .calc
 
     mov  esi, pm_input_buf
@@ -250,12 +278,12 @@ pm_exec:
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_arping
-    call pm_startswith
+    call pm_cmdmatch
     je   .arping
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_ping
-    call pm_startswith
+    call pm_cmdmatch
     je   .ping
 
     mov  esi, pm_input_buf
@@ -275,7 +303,7 @@ pm_exec:
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_timer
-    call pm_startswith
+    call pm_cmdmatch
     je   .timer
 
     mov  esi, pm_input_buf
@@ -290,12 +318,12 @@ pm_exec:
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_dns
-    call pm_startswith
+    call pm_cmdmatch
     je   .dns
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_tcpget
-    call pm_startswith
+    call pm_cmdmatch
     je   .tcpget
 
     mov  esi, pm_input_buf
@@ -305,17 +333,17 @@ pm_exec:
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_cat
-    call pm_startswith
+    call pm_cmdmatch
     je   .cat
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_rm
-    call pm_startswith
+    call pm_cmdmatch
     je   .rm
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_hexdump
-    call pm_startswith
+    call pm_cmdmatch
     je   .hexdump
 
     mov  esi, pm_input_buf
@@ -335,18 +363,28 @@ pm_exec:
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_beep
-    call pm_startswith
+    call pm_cmdmatch
     je   .beep
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_pfx_wp
-    call pm_startswith
+    call pm_cmdmatch
     je   .wp
 
     mov  esi, pm_input_buf
     mov  edi, pm_str_cmd_taskman
     call pm_strcmp
     je   .taskman
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_notepad
+    call pm_strcmp
+    je   .notepad
+
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_shutdown
+    call pm_strcmp
+    je   .shutdown
 
     ; unknown
     mov  esi, pm_str_unknown
@@ -359,6 +397,8 @@ pm_exec:
 .clear: call pm_cmd_clear
     jmp  .done
 .echo:  call pm_cmd_echo
+    jmp  .done
+.notepad: call pm_cmd_notepad
     jmp  .done
 .calc:  call pm_cmd_calc
     jmp  .done
@@ -411,6 +451,8 @@ pm_exec:
 .wp:        call pm_cmd_wp
     jmp  .done
 .taskman:   call pm_cmd_taskman
+    jmp  .done
+.shutdown:  call pm_cmd_shutdown
     jmp  .done
 .exit:  call pm_cmd_exit       ; does not return to here
 
@@ -680,6 +722,66 @@ dbg_serial_puts:
 .dn:
     popa
     ret
+
+; Print EAX as 8 hex digits to serial
+dbg_serial_hex:
+    push eax
+    push ebx
+    push ecx
+    mov  ecx, 8
+.loop:
+    rol  eax, 4
+    mov  bl, al
+    and  bl, 0x0F
+    add  bl, '0'
+    cmp  bl, '9'
+    jle  .out
+    add  bl, 7
+.out:
+    push eax
+    mov  dx, 0x3F8
+.wait:
+    mov  al, 0
+    add  dx, 5
+    in   al, dx
+    sub  dx, 5
+    test al, 0x20
+    jz   .wait
+    mov  al, bl
+    out  dx, al
+    pop  eax
+    dec  ecx
+    jnz  .loop
+    pop  ecx
+    pop  ebx
+    pop  eax
+    ret
+
+dbg_serial_print_hex32:
+    pusha
+    mov  ecx, 8
+.loop:
+    rol  eax, 4
+    mov  edx, eax
+    and  edx, 0x0F
+    cmp  edx, 10
+    jl   .digit
+    add  dl, 'A' - 10
+    jmp  .out
+.digit:
+    add  dl, '0'
+.out:
+    push eax
+    mov  eax, esi           ; save esi
+    mov  esi, .tmp
+    mov  [esi], dl
+    call dbg_serial_puts
+    mov  esi, eax           ; restore esi
+    pop  eax
+    loop .loop
+    popa
+    ret
+.tmp: db 0, 0
 ; ------------------------------------
 
 ; -
@@ -692,6 +794,7 @@ dbg_serial_puts:
 %include "pm/apps/sysinfo.asm"
 %include "pm/apps/taskman.asm"
 %include "pm/apps/browser.asm"
+%include "pm/apps/notepad.asm"
 %include "pm/drivers/pm_drivers.asm"
 %include "pm/core/pm_data.asm"
 %include "pm/drivers/mouse.asm"
@@ -701,4 +804,5 @@ dbg_serial_puts:
 %include "pm/gui/wm_taskbar.asm"
 %include "pm/gui/icons.asm"
 %include "pm/gui/wallpaper.asm"
+%include "pm/gui/ctx_menu.asm"
 %include "pm/core/paging.asm"

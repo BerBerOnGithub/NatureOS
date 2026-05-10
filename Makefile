@@ -19,7 +19,7 @@ ISO        := natureos.iso
 # 512-sector 804: fs.bin       (was wrongly 204 - fixed to match build.bat)
 KERNEL_START_SECTOR := 4
 FS_START_SECTOR     := 804
-FS_SECTORS          := 1600
+FS_SECTORS          := 660
 FLAT_SECTORS        := $(shell echo $$(($(FS_START_SECTOR) + $(FS_SECTORS))))
 
 DATA_IMG   := data.img

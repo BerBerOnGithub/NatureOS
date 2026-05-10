@@ -101,6 +101,38 @@ irq_init:
     popa
     ret
 
+; - irq_restore -
+; Restores PIC to Real Mode defaults:
+; IRQ0-7  -> INT 0x08-0x0F
+; IRQ8-15 -> INT 0x70-0x77
+; Unmasks all IRQs.
+irq_restore:
+    pusha
+    
+    ; - remap PIC -
+    mov  al, 0x11
+    out  0x20, al
+    out  0xA0, al
+    mov  al, 0x08           ; Master PIC offset = 0x08 (BIOS default)
+    out  0x21, al
+    mov  al, 0x70           ; Slave PIC offset = 0x70 (BIOS default)
+    out  0xA1, al
+    mov  al, 0x04
+    out  0x21, al
+    mov  al, 0x02
+    out  0xA1, al
+    mov  al, 0x01
+    out  0x21, al
+    out  0xA1, al
+    
+    ; - unmask all IRQs -
+    mov  al, 0x00
+    out  0x21, al
+    out  0xA1, al
+    
+    popa
+    ret
+
 ; - IRQ0 handler (PIT, 100Hz) -
 irq0_handler:
     push eax
@@ -150,6 +182,18 @@ irq_fatal_dump:
     call irq_serial_putc
     pop  eax
 
+    ; Print CR2 (Faulting Address) - critical for 0E
+    mov  esi, str_cr2
+    call irq_serial_puts
+    mov  eax, cr2
+    call irq_serial_print_hex32_local
+
+    ; Print Error Code
+    mov  esi, str_err_code
+    call irq_serial_puts
+    mov  eax, ebx
+    call irq_serial_print_hex32_local
+
     mov  al, 13
     call irq_serial_putc
     mov  al, 10
@@ -157,6 +201,23 @@ irq_fatal_dump:
     
     cli
     hlt
+
+; Local helper (can't rely on outside functions if GDT/IDT broken)
+irq_serial_print_hex32_local:
+    pusha
+    mov  ecx, 8
+.loop:
+    rol  eax, 4
+    mov  edx, eax
+    and  edx, 0x0F
+    mov  dl, [str_hex + edx]
+    call irq_serial_putc
+    loop .loop
+    popa
+    ret
+
+str_cr2:      db " CR2:", 0
+str_err_code: db " ERR:", 0
 
 irq_serial_puts:
     push eax

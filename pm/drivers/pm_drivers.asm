@@ -25,8 +25,9 @@ pm_drv_status:
     db 0    ; 3 Speaker
     db 0    ; 4 PCI bus
     db 0    ; 5 e1000 NIC
+    db 0    ; 6 ACPI
 
-PM_DRV_COUNT equ 6
+PM_DRV_COUNT equ 7
 
 ; -
 ; pm_drv_init - initialise all PM drivers on entry to protected mode
@@ -100,6 +101,11 @@ pm_drv_init:
     mov  al, [e1000_ready]
     mov  [pm_drv_status + 5], al
 
+    ; - Driver 6: ACPI -
+    call acpi_init
+    setnc al                ; set AL=1 if CF=0 (success)
+    mov  [pm_drv_status + 6], al
+
     ; pre-seed ARP cache (QEMU SLIRP gateway doesn't respond to ARP)
     call arp_init
 
@@ -139,6 +145,23 @@ pm_drv_shutdown:
     jmp  .flush
 .flush_done:
     mov  byte [pm_drv_status + 1], 0
+    ; Restore PS/2 controller to interrupt mode for RM
+    call .kww
+    mov  al, 0x20           ; Read Command Byte
+    out  0x64, al
+    call .kwr
+    in   al, 0x60
+    or   al, 0x03           ; Enable IRQ1 and IRQ12 (bits 0 and 1)
+    push eax
+    call .kww
+    mov  al, 0x60           ; Write Command Byte
+    out  0x64, al
+    call .kww
+    pop  eax
+    out  0x60, al
+
+    ; Restore PIC to BIOS defaults
+    call irq_restore
 
     ; - Driver 0: Screen " mark unloaded (RM will reinit via BIOS) -
     mov  byte [pm_drv_status + 0], 0
@@ -160,6 +183,20 @@ pm_drv_shutdown:
 
     pop  edx
     pop  eax
+    ret
+
+; helper: wait for 8042 to be ready for writing
+.kww:
+    in   al, 0x64
+    test al, 0x02
+    jnz  .kww
+    ret
+
+; helper: wait for 8042 to have data for reading
+.kwr:
+    in   al, 0x64
+    test al, 0x01
+    jz   .kwr
     ret
 
 ; -
@@ -208,6 +245,12 @@ pm_cmd_drivers:
     mov  bl, 0x0E
     call pm_puts
     mov  al, [pm_drv_status + 5]
+    call .status
+
+    mov  esi, pm_str_drv_acpi
+    mov  bl, 0x0E
+    call pm_puts
+    mov  al, [pm_drv_status + 6]
     call .status
 
     mov  esi, pm_str_drv_footer
@@ -279,9 +322,11 @@ pm_str_drv_pit:     db ' | PIT Timer (0x40-43)  | ', 0
 pm_str_drv_spk:     db ' | Speaker (PIT ch.2)   | ', 0
 pm_str_drv_pci:     db ' | PCI Bus  (0xCF8)     | ', 0
 pm_str_drv_e1000:   db ' | e1000 NIC (MMIO)     | ', 0
+pm_str_drv_acpi:    db ' | ACPI Power Mgmt      | ', 0
 pm_str_drv_loaded:   db 'LOADED   |', 13, 10, 0
 pm_str_drv_unloaded: db 'UNLOADED |', 13, 10, 0
 
+%include "pm/drivers/acpi.asm"
 %include "pm/net/pci.asm"
 %include "pm/net/e1000.asm"
 %include "pm/net/eth.asm"

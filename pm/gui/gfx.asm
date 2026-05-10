@@ -24,7 +24,7 @@
 
 [BITS 32]
 
-GFX_SHADOW   equ 0x500000    ; 640*480 = 307200 bytes RAM shadow buffer
+GFX_SHADOW   equ 0x1400000   ; 640*480 = 307200 bytes RAM shadow buffer (moved to 20MB)
 GFX_W        equ 640
 GFX_H        equ 480
 GFX_PIX      equ GFX_W * GFX_H
@@ -41,14 +41,31 @@ gfx_init:
     mov  eax, [vbe_physbase]
     mov  [gfx_hw_base], eax
 
+    ; Load standard 16-color VGA palette into DAC 0-15
+    push esi
+    push edx
+    mov  dx, 0x3C8
+    xor  al, al
+    out  dx, al                 ; Start at DAC index 0
+    mov  dx, 0x3C9
+    mov  esi, gfx_vga_palette
+    mov  ecx, 48                ; 16 colors * 3 bytes
+    rep  outsb                  ; Dump palette
+    pop  edx
+    pop  esi
+
     ; drawing always goes to shadow buffer in RAM
     mov  dword [gfx_fb_base],  GFX_SHADOW
     mov  dword [gfx_fb_pitch], GFX_W      ; shadow pitch is always exactly 640
 
+    ; trigger full flush on next call
+    mov  dword [gfx_dirty_y0], 0
+    mov  dword [gfx_dirty_y1], 479
+
     ; zero shadow buffer
     mov  edi, GFX_SHADOW
     mov  ecx, GFX_PIX / 4
-    xor  eax, eax
+    mov  eax, 0x0F0F0F0F
     rep  stosd
 
     ; zero MMIO only if vbe_physbase is valid (above 1MB) - never zero low memory
@@ -56,7 +73,7 @@ gfx_init:
     cmp  edi, 0x100000       ; sanity check: must be above 1MB
     jb   .skip_mmio_zero
     mov  ecx, GFX_PIX / 4
-    xor  eax, eax
+    mov  eax, 0x0F0F0F0F
     rep  stosd
 .skip_mmio_zero:
     pop  edi
@@ -72,34 +89,47 @@ gfx_init:
 ; -
 gfx_flush:
     push eax
+    push ebx
     push ecx
     push esi
     push edi
     ; if nothing dirty, skip
-    mov  eax, [gfx_dirty_y0]
+    mov  eax, [gfx_dirty_y0]    ; y0
     cmp  eax, 480
     jge  .gf_done
-    ; clamp y1
-    mov  ecx, [gfx_dirty_y1]
-    cmp  ecx, 480
-    jle  .gf_y1ok
+    
+    mov  ecx, [gfx_dirty_y1]    ; y1
+    sub  ecx, eax               ; rows = y1 - y0
+    inc  ecx                    ; inclusive (+1)
+    
+    ; clamp to screen height
+    mov  ebx, eax
+    add  ebx, ecx
+    cmp  ebx, 480
+    jle  .ok
     mov  ecx, 480
-.gf_y1ok:
-    ; rows to copy = y1 - y0
     sub  ecx, eax
+.ok:
+    test ecx, ecx
     jle  .gf_done
+
     ; src = GFX_SHADOW + y0*640
     mov  esi, GFX_SHADOW
+    push eax
     imul eax, 640
     add  esi, eax
+    pop  eax
+    
     ; dst = gfx_hw_base + y0*640
     mov  edi, [gfx_hw_base]
-    mov  eax, [gfx_dirty_y0]
     imul eax, 640
     add  edi, eax
-    ; copy ecx rows * 640 bytes = ecx*160 dwords
+    
+    ; copy ecx rows * 160 dwords
     imul ecx, 160
     rep  movsd
+    
+.reset_dirty:
     ; reset dirty region
     mov  dword [gfx_dirty_y0], 480
     mov  dword [gfx_dirty_y1], 0
@@ -107,6 +137,7 @@ gfx_flush:
     pop  edi
     pop  esi
     pop  ecx
+    pop  ebx
     pop  eax
     ret
 
@@ -128,7 +159,7 @@ gfx_flush_full:
     pop  eax
     ret
 
-; gfx_mark_dirty - expand dirty region to include rows EAX..EBX (inclusive)
+; gfx_mark_dirty - expand dirty region to include rows EAX..EBX (exclusive bottom)
 ; In: EAX=y_top, EBX=y_bottom
 gfx_mark_dirty:
     push eax
@@ -137,7 +168,6 @@ gfx_mark_dirty:
     jge  .md_y0ok
     mov  [gfx_dirty_y0], eax
 .md_y0ok:
-    inc  ebx
     cmp  ebx, [gfx_dirty_y1]
     jle  .md_y1ok
     mov  [gfx_dirty_y1], ebx
@@ -194,9 +224,10 @@ fb_draw_pixel:
 fb_hline:
     push ecx
     push edi
+    mov  ch, cl
     call gfx_row_ptr
     mov  ecx, edx
-    movzx eax, cl
+    mov  al, ch
     rep  stosb
     pop  edi
     pop  ecx
@@ -253,6 +284,19 @@ fb_fill_rect:
     push edx
     push esi
     push edi
+    
+    ; mark region dirty
+    push eax
+    push ebx
+    push ecx
+    mov  eax, ebx              ; y0
+    mov  ebx, eax
+    add  ebx, edx              ; y1
+    call gfx_mark_dirty
+    pop  ecx
+    pop  ebx
+    pop  eax
+
     mov  [gfx_rect_x],   eax
     mov  [gfx_rect_w],   ecx
     mov  [gfx_rect_col], esi
@@ -285,11 +329,20 @@ fb_fill_rect:
 ; fb_draw_rect_outline - EAX=x, EBX=y, ECX=width, EDX=height, ESI=colour
 ; -
 fb_draw_rect_outline:
+    pusha
+    
+    ; mark region dirty
     push eax
     push ebx
-    push ecx
     push edx
-    push esi
+    mov  eax, ebx              ; y0
+    mov  ebx, eax
+    add  ebx, edx              ; y1
+    call gfx_mark_dirty
+    pop  edx
+    pop  ebx
+    pop  eax
+    
     mov  [gfx_rect_x], eax
     mov  [gfx_rect_y], ebx
     mov  [gfx_rect_w], ecx
@@ -316,11 +369,7 @@ fb_draw_rect_outline:
     mov  ebx, [gfx_rect_y]
     mov  edx, [gfx_rect_h]
     call fb_vline
-    pop  esi
-    pop  edx
-    pop  ecx
-    pop  ebx
-    pop  eax
+    popa
     ret
 
 ; -
@@ -381,6 +430,26 @@ fb_xor_rect_outline:
 gfx_fb_base:   dd GFX_SHADOW
 gfx_hw_base:   dd 0
 gfx_fb_pitch:  dd GFX_W
+
+; Standard 16-color VGA palette (6-bit RGB values: 0-63)
+gfx_vga_palette:
+    db 00, 00, 00   ; 0: Black
+    db 00, 00, 42   ; 1: Blue
+    db 00, 42, 00   ; 2: Green
+    db 00, 42, 42   ; 3: Cyan
+    db 42, 00, 00   ; 4: Red
+    db 42, 00, 42   ; 5: Magenta
+    db 42, 21, 00   ; 6: Brown
+    db 42, 42, 42   ; 7: Light Gray
+    db 21, 21, 21   ; 8: Dark Gray
+    db 21, 21, 63   ; 9: Light Blue
+    db 21, 63, 21   ; 10: Light Green
+    db 21, 63, 63   ; 11: Light Cyan
+    db 63, 21, 21   ; 12: Light Red
+    db 63, 21, 63   ; 13: Light Magenta
+    db 63, 63, 21   ; 14: Yellow
+    db 63, 63, 63   ; 15: White
+
 gfx_rect_x:    dd 0
 gfx_rect_y:    dd 0
 gfx_rect_w:    dd 0

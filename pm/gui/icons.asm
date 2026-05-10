@@ -154,6 +154,10 @@ icons_draw:
     inc  dword [icn_draw_idx]
     jmp  .loop
 .done:
+    ; mark icon column dirty
+    mov  eax, 0
+    mov  ebx, WM_TASKBAR_Y
+    call gfx_mark_dirty
     popa
     ret
 

@@ -49,23 +49,14 @@ kernel_main:
     cli
     hlt
 
-; -
-; boot_to_pm
-; Switches to 32-bit protected mode unconditionally.
-;
-; A20 is enabled via three methods for maximum hardware compatibility:
-;   1. BIOS INT 15h AX=2401h  (works on most modern BIOSes)
-;   2. Keyboard controller     (works on old AT-compatible hardware)
-;   3. Fast A20 port 0x92     (works on most PC/AT clones)
-;
-; The original code used INT 15h AH=86h (BIOS Wait / delay) which does
-; nothing at all for A20 -- fixed here.
-; -
-boot_to_pm:
+enable_a20:
+    pushf
+    cli
+    pusha
     ; ---- Method 1: BIOS INT 15h AX=2401h (Enable A20) ----
     mov  ax, 0x2401
     int  0x15
-    ; ignore carry -- not all BIOSes support this, fall through to methods 2+3
+    jnc  .a20_done          ; SUCCESS! Skip the dangerous hardware hacks!
 
     ; ---- Method 2: Keyboard controller A20 gate ----
     call .kbc_flush
@@ -99,11 +90,33 @@ boot_to_pm:
     out  0x92, al
 
     ; ---- Short delay to let A20 propagate ----
-    ; Some chipsets need a few microseconds
     mov  cx, 0x100
 .a20_delay:
     loop .a20_delay
 
+.a20_done:
+    popa
+    popf
+    ret
+
+; ---- KBC helper routines (local to enable_a20) ----
+.kbc_flush:                 ; wait for KBC input buffer empty (bit 1 of status)
+    in   al, 0x64
+    test al, 0x02
+    jnz  .kbc_flush
+    ret
+.kbc_read_ready:            ; wait for KBC output buffer full (bit 0 of status)
+    in   al, 0x64
+    test al, 0x01
+    jz   .kbc_read_ready
+    ret
+
+; -
+; boot_to_pm
+; Switches to 32-bit protected mode unconditionally.
+; -
+boot_to_pm:
+    call enable_a20
     cli
 
     ; Save real-mode stack pointer so mode_switch.asm can restore it
@@ -117,17 +130,7 @@ boot_to_pm:
 
     jmp  0x08:pm_entry      ; far jump flushes prefetch, loads CS=0x08
 
-; ---- KBC helper routines (local to boot_to_pm) ----
-.kbc_flush:                 ; wait for KBC input buffer empty (bit 1 of status)
-    in   al, 0x64
-    test al, 0x02
-    jnz  .kbc_flush
-    ret
-.kbc_read_ready:            ; wait for KBC output buffer full (bit 0 of status)
-    in   al, 0x64
-    test al, 0x01
-    jz   .kbc_read_ready
-    ret
+    ; far jump flushes prefetch, loads CS=0x08
 
 ; -
 ; Syscall trampoline - must land at offset 0x100 from ORG 0x8000 = 0x8100
@@ -608,6 +611,7 @@ str_booting_rm:
 ; -
 mem_tester:
     pusha
+    call enable_a20
     call unreal_init
     call .detect_ram
     mov  word [mt_errors], 0
@@ -692,8 +696,8 @@ mem_tester:
     call .check_esc
     jc   .at_quit
 .at_no_ui:
-    mov  [ds:edi], edi
-    cmp  [ds:edi], edi
+    mov  [fs:edi], edi
+    cmp  [fs:edi], edi
     je   .at_ok
     inc  word [mt_errors]
     call .update_error_ui
@@ -719,8 +723,8 @@ mem_tester:
     call .check_esc
     jc   .mi_quit
 .mi_no_ui:
-    mov  [ds:edi], eax
-    cmp  [ds:edi], eax
+    mov  [fs:edi], eax
+    cmp  [fs:edi], eax
     je   .mi_ok
     inc  word [mt_errors]
     call .update_error_ui
@@ -752,8 +756,8 @@ mem_tester:
     jc   .rs_quit
 .rs_no_ui:
     call .random_next
-    mov  [ds:edi], eax
-    cmp  [ds:edi], eax
+    mov  [fs:edi], eax
+    cmp  [fs:edi], eax
     je   .rs_ok
     inc  word [mt_errors]
     call .update_error_ui
@@ -836,8 +840,8 @@ mem_tester:
     call .check_esc
     jc   .wb_i_quit
 .wb_i_no_ui:
-    mov  [ds:edi], ebx
-    cmp  [ds:edi], ebx
+    mov  [fs:edi], ebx
+    cmp  [fs:edi], ebx
     je   .wb_i_ok
     inc  word [mt_errors]
     call .update_error_ui
@@ -1157,16 +1161,14 @@ unreal_init:
     jmp  $+2                ; Flush prefetch
     
     mov  bx, 0x10           ; 4GB data selector (index 2 in GDT)
-    mov  ds, bx
-    mov  es, bx             ; Load hidden segment limits into registers
+    mov  fs, bx             ; Load hidden segment limits into FS
+    mov  gs, bx             ; Load hidden segment limits into GS
     
     mov  eax, cr0
     and  al, 0xFE           ; Back to RM
     mov  cr0, eax
     
-    pop  ds                 ; Restore DS (segment limits remain 4GB!)
-    mov  ax, ds
-    mov  es, ax             ; Sync ES
+    pop  ds                 ; Restore DS (DS and ES correctly reset to 64KB limits)
     sti                     ; Re-enable interrupts
     popa
     ret

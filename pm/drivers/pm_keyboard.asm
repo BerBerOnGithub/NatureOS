@@ -23,7 +23,7 @@ pm_kb_poll:
     ; check if ANY window is focused (bit +18 in wm_table entries)
     xor  ecx, ecx
 .fchk:
-    cmp  ecx, 4              ; WM_MAX_WINS
+    cmp  ecx, WM_MAX_WINS
     jge  .no_focus
     imul ebx, ecx, 32        ; WM_STRIDE
     cmp  byte [wm_table + ebx + 18], 1
@@ -151,16 +151,26 @@ pm_getkey:
     test al, 0x80            ; key release - ignore
     jnz  .next_key
 
-    movzx ebx, al
-    cmp  ebx, 84             ; 0x54 - include numpad range 0x47-0x53
-    jae  .next_key
-
+    movzx ebx, al            ; EBX = scancode
+    push ebx
+    cmp  ebx, 84             ; scan code limit
+    jae  .no_ascii
+    
     cmp  byte [pm_shift], 0
     jne  .shifted
     mov  al, [pm_scancode_table + ebx]
-    jmp  .done
+    jmp  .got_ascii
 .shifted:
     mov  al, [pm_scancode_shift + ebx]
+    jmp  .got_ascii
+
+.no_ascii:
+    xor  al, al
+
+.got_ascii:
+    pop  ebx
+    mov  ah, bl              ; AH = scancode
+    jmp  .done
 
 .done:
     pop  ecx
@@ -171,7 +181,7 @@ pm_getkey:
     mov  byte [pm_shift], 1
     jmp  .next_key
 .no_key:
-    xor  al, al
+    xor  eax, eax            ; AX = 0 means no key
     pop  ecx
     pop  ebx
     ret
@@ -211,10 +221,17 @@ pm_readline:
     je   .enter
     cmp  al, 8               ; Backspace
     je   .bs
+    cmp  al, 0x80            ; UP arrow
+    je   .up
+    cmp  al, 0x81            ; DOWN arrow
+    je   .down
 
     cmp  dword [pm_input_len], 127
     jge  .loop
 
+    ; if we were browsing history, we now commit to this line as a "new" line
+    mov  byte [pm_hist_active], 0
+    
     mov  [edi], al
     inc  edi
     inc  dword [pm_input_len]
@@ -222,9 +239,102 @@ pm_readline:
     call pm_putc
     jmp  .loop
 
+.up:
+    call pm_hist_up
+    jc   .loop
+    
+    call .clear_line
+    
+    ; copy from history[view] to input_buf
+    pusha
+    mov  eax, [pm_hist_view]
+    imul eax, PM_HIST_LEN
+    add  eax, pm_hist_buffer
+    mov  esi, eax
+    mov  edi, pm_input_buf
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+    
+    ; update length and edi
+    mov  esi, pm_input_buf
+    call pm_strlen
+    mov  [pm_input_len], eax
+    mov  edi, pm_input_buf
+    add  edi, eax
+    
+    ; print the line
+    mov  esi, pm_input_buf
+    mov  bl, 0x0F
+    call pm_puts
+    call pm_update_cursor
+    jmp  .loop
+
+.down:
+    call pm_hist_down
+    jc   .loop
+    
+    call .clear_line
+    
+    cmp  byte [pm_hist_active], 0
+    je   .at_bottom_restore
+    
+    ; copy from history[view]
+    pusha
+    mov  eax, [pm_hist_view]
+    imul eax, PM_HIST_LEN
+    add  eax, pm_hist_buffer
+    mov  esi, eax
+    mov  edi, pm_input_buf
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+    jmp  .down_done
+
+.at_bottom_restore:
+    ; restore from temp
+    pusha
+    mov  esi, pm_hist_temp
+    mov  edi, pm_input_buf
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+
+.down_done:
+    mov  esi, pm_input_buf
+    call pm_strlen
+    mov  [pm_input_len], eax
+    mov  edi, pm_input_buf
+    add  edi, eax
+    
+    mov  esi, pm_input_buf
+    mov  bl, 0x0F
+    call pm_puts
+    call pm_update_cursor
+    jmp  .loop
+
+.clear_line:
+    pusha
+    ; move cursor back by pm_input_len
+    mov  ecx, [pm_input_len]
+    test ecx, ecx
+    jz   .cl_done
+.cl_lp:
+    dec  dword [pm_cursor_x]
+    mov  al, ' '
+    mov  bl, 0x07
+    call pm_putc
+    dec  dword [pm_cursor_x]
+    loop .cl_lp
+    call pm_update_cursor
+.cl_done:
+    popa
+    ret
+
 .bs:
     cmp  dword [pm_input_len], 0
     je   .loop
+    mov  byte [pm_hist_active], 0    ; typing now
     dec  edi
     mov  byte [edi], 0
     dec  dword [pm_input_len]
@@ -240,8 +350,101 @@ pm_readline:
 
 .enter:
     mov  byte [edi], 0
+    
+    ; save to history
+    mov  esi, pm_input_buf
+    call pm_hist_save
+    
+    mov  byte [pm_hist_active], 0
     call pm_newline
     call pm_update_cursor
     pop  edi
     pop  eax
+    ret
+
+; ===========================================================================
+; History Helpers (Shared between pm_readline and terminal.asm)
+; ===========================================================================
+
+; pm_hist_save - save string in ESI to history
+pm_hist_save:
+    pusha
+    call pm_strlen
+    test eax, eax
+    jz   .done
+    
+    mov  eax, [pm_hist_head]
+    imul eax, PM_HIST_LEN
+    add  eax, pm_hist_buffer
+    mov  edi, eax
+    ; esi is already source
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    
+    mov  eax, [pm_hist_head]
+    inc  eax
+    and  eax, 0x0F
+    mov  [pm_hist_head], eax
+    
+    inc  dword [pm_hist_num]
+    cmp  dword [pm_hist_num], 16
+    jle  .num_ok
+    mov  dword [pm_hist_num], 16
+.num_ok:
+.done:
+    popa
+    ret
+
+; pm_hist_up - prepare to cycle UP. Returns CF=0 if display update needed.
+; ESI must point to current input buffer (for initial save to temp)
+pm_hist_up:
+    cmp  dword [pm_hist_num], 0
+    jz   .fail
+    
+    cmp  byte [pm_hist_active], 1
+    je   .continue
+    
+    ; first press: save current line
+    pusha
+    mov  edi, pm_hist_temp
+    mov  ecx, PM_HIST_LEN / 4
+    rep  movsd
+    popa
+    
+    mov  byte [pm_hist_active], 1
+    mov  eax, [pm_hist_head]
+    mov  [pm_hist_view], eax
+    
+.continue:
+    mov  eax, [pm_hist_view]
+    dec  eax
+    and  eax, 0x0F
+    mov  [pm_hist_view], eax
+    clc
+    ret
+.fail:
+    stc
+    ret
+
+; pm_hist_down - prepare to cycle DOWN. Returns CF=0 if display update needed.
+pm_hist_down:
+    cmp  byte [pm_hist_active], 0
+    je   .fail
+    
+    mov  eax, [pm_hist_view]
+    inc  eax
+    and  eax, 0x0F
+    mov  [pm_hist_view], eax
+    
+    mov  ebx, [pm_hist_head]
+    cmp  eax, ebx
+    je   .bottom
+    clc
+    ret
+.bottom:
+    mov  byte [pm_hist_active], 0
+    clc
+    ret
+.fail:
+    stc
     ret

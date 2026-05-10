@@ -144,8 +144,11 @@ wallpaper_load:
     jns  .row_loop
 
     mov  byte [wp_loaded], 1
+    mov  esi, .msg_ok
+    call dbg_serial_puts
     popa
     ret
+.msg_ok: db '[WP] loaded 640x480', 13, 10, 0
 
 .fail:
     mov  byte [wp_loaded], 0
@@ -159,16 +162,8 @@ wallpaper_draw:
     cmp  byte [wp_loaded], 1
     jne  .solid_fill
 
-    ; top padding rows if image shorter than 480
-    mov  eax, 480
-    sub  eax, [wp_h]
-    jz   .blit
-    shr  eax, 1                 ; centre vertically
-    mov  edi, [gfx_fb_base]
-    imul eax, [gfx_fb_pitch]
-    mov  ecx, eax
-    xor  al, al
-    rep  stosb
+    ; shadow buffer already zeroed by gfx_init, no need to redundant clear here
+    ; this avoids 1-pixel black "gaps" if wallpaper height isn't exactly 480
 
 .blit:
     ; blit row by row using explicit framebuffer row pointer
@@ -177,10 +172,13 @@ wallpaper_draw:
     cmp  ebx, [wp_h]
     jge  .blit_done
 
-    ; framebuffer row pointer: base + row * pitch
+    ; framebuffer row pointer: base + (row + pad_top) * pitch
     mov  edi, [gfx_fb_base]
-    mov  eax, [gfx_fb_pitch]
-    imul eax, ebx
+    mov  eax, 480
+    sub  eax, [wp_h]
+    shr  eax, 1                 ; eax = pad_top
+    add  eax, ebx               ; eax = screen row
+    imul eax, [gfx_fb_pitch]
     add  edi, eax
 
     ; source pointer: WP_BUF + row * 640
@@ -192,11 +190,12 @@ wallpaper_draw:
     mov  ecx, [wp_w]
     rep  movsb
 
-    ; pad right side with black if image narrower than 640
+    ; pad right side with first wallpaper colour (index 16) if image narrower than 640
+    ; NOTE: never pad with 0 (black) - that causes a black line on the right edge
     mov  ecx, 640
     sub  ecx, [wp_w]
     jz   .next_row
-    xor  al, al
+    mov  al, 16         ; first wallpaper DAC slot, not black (0)
     rep  stosb
 
 .next_row:
@@ -204,24 +203,10 @@ wallpaper_draw:
     jmp  .blit_loop
 
 .blit_done:
-    ; bottom padding rows if image shorter than 480
-    mov  eax, 480
-    sub  eax, [wp_h]
-    jz   .done
-    mov  ebx, 480
-    sub  ebx, [wp_h]
-    shr  ebx, 1
-    add  ebx, [wp_h]            ; first bottom padding row
-    mov  edi, [gfx_fb_base]
-    mov  eax, [gfx_fb_pitch]
-    imul eax, ebx
-    add  edi, eax
-    mov  eax, 480
-    sub  eax, ebx
-    imul eax, [gfx_fb_pitch]
-    mov  ecx, eax
-    xor  al, al
-    rep  stosb
+    ; mark entire screen dirty after wallpaper draw
+    mov  eax, 0
+    mov  ebx, 479
+    call gfx_mark_dirty
     jmp  .done
 
 .solid_fill:
@@ -233,12 +218,17 @@ wallpaper_draw:
     call fb_fill_rect
 
 .done:
-    call wm_draw_sysinfo            ; draw stats panel over wallpaper, under windows
     popa
     ret
 
+.msg_pad: db '[WP] draw pad:', 0
+.msg_h:   db ' h:', 0
+.msg_nl:  db 13, 10, 0
+
+wp_dbg_row: db '[WP] src=0x', 0
+wp_dbg_nl:  db 13, 10, 0
+
 ; -
-wp_loaded:   db 0
 wp_file:     dd 0
 wp_w:        dd 0
 wp_h:        dd 0

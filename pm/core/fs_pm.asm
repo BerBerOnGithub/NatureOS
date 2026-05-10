@@ -1,8 +1,8 @@
 ; ===========================================================================
 ; pm/fs_pm.asm  -  Protected-mode ', FS_NAME, ' reader
 ;
-; The FS blob is loaded by stage2 to physical 0x20000.
-; In 32-bit flat mode that is simply address 0x20000.
+; The FS blob is loaded by stage2 to physical 0x30000 (formerly 0x20000).
+; In 32-bit flat mode that is simply address 0x30000.
 ;
 ; ', FS_NAME, ' layout (matches cmd_fs.asm / mkfs.py):
 ;   +0   4 bytes  magic "', FS_MAGIC, '"
@@ -24,7 +24,7 @@
 
 [BITS 32]
 
-FS_PM_BASE   equ  0x20000
+FS_PM_BASE   equ  0x30000
 FS_ENT_SZ    equ  24
 FS_NAME_LEN  equ  16
 
