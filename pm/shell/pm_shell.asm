@@ -164,6 +164,7 @@ pm_entry:
     call term_tick
     call browser_tick
     call notepad_tick
+    call paint_tick
     call wm_draw_dirty          ; only redraws windows marked dirty
 
     cmp  byte [scr_pending], 1
@@ -386,6 +387,11 @@ pm_exec:
     call pm_strcmp
     je   .shutdown
 
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_paint
+    call pm_strcmp
+    je   .paint
+
     ; unknown
     mov  esi, pm_str_unknown
     mov  bl, 0x0C
@@ -453,6 +459,8 @@ pm_exec:
 .taskman:   call pm_cmd_taskman
     jmp  .done
 .shutdown:  call pm_cmd_shutdown
+    jmp  .done
+.paint:     call pm_cmd_paint
     jmp  .done
 .exit:  call pm_cmd_exit       ; does not return to here
 
@@ -795,6 +803,7 @@ dbg_serial_print_hex32:
 %include "pm/apps/taskman.asm"
 %include "pm/apps/browser.asm"
 %include "pm/apps/notepad.asm"
+%include "pm/apps/paint.asm"
 %include "pm/drivers/pm_drivers.asm"
 %include "pm/core/pm_data.asm"
 %include "pm/drivers/mouse.asm"

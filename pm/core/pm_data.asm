@@ -124,6 +124,7 @@ pm_str_cmd_browser:  db 'browser', 0
 pm_str_pfx_beep:     db 'beep', 0
 pm_str_pfx_wp:       db 'wp', 0
 pm_str_cmd_taskman:    db 'taskman', 0
+pm_str_cmd_paint:     db 'paint', 0
 pm_str_cmd_shutdown: db 'shutdown', 0
 pm_str_beep_usage:   db 'Usage: beep <freq_hz> <duration_ticks>', 13, 10, 0
 si_str_cpu:          db 'CPU:', 0
@@ -165,7 +166,7 @@ pm_str_help_text:
     db ' | tcpget <ip> <p> <path>| HTTP GET via TCP           |', 13, 10
     db ' | stopwatch            | stopwatch window           |', 13, 10
     db ' | timer MM:SS          | countdown timer            |', 13, 10
-    db ' | term / files / notepad | open window                |', 13, 10
+    db ' | term / files / notepad / paint | open window        |', 13, 10
     db ' | ls                   | list files                 |', 13, 10
     db ' | cat <name>           | print file contents        |', 13, 10
     db ' | rm <name>            | delete file                |', 13, 10

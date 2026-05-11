@@ -50,6 +50,7 @@ WM_HELP       equ 3
 WM_BROWSER    equ 4
 WM_TASKMAN    equ 5
 WM_NOTEPAD    equ 6
+WM_PAINT      equ 7
 
 ; colours
 WM_C_DESK     equ 0x01      ; dark blue desktop
@@ -461,6 +462,8 @@ wm_draw_all:
     je   .wtaskman
     cmp  byte [edi+16], WM_NOTEPAD
     je   .wnotepad
+    cmp  byte [edi+16], WM_PAINT
+    je   .wpaint
     jmp  .wnext
 .wclock:
     call wm_draw_clock
@@ -479,6 +482,9 @@ wm_draw_all:
     jmp  .wnext
 .wnotepad:
     call notepad_draw
+    jmp  .wnext
+.wpaint:
+    call paint_draw
 .wnext:
     inc  dword [wm_i]
     jmp  .wloop
@@ -604,6 +610,8 @@ wm_draw_dirty:
     je   .dd_wtaskman
     cmp  byte [edi+16], WM_NOTEPAD
     je   .dd_wnotepad
+    cmp  byte [edi+16], WM_PAINT
+    je   .dd_wpaint
     jmp  .dd_wnext
 .dd_wclock:
     call wm_draw_clock
@@ -622,6 +630,9 @@ wm_draw_dirty:
     jmp  .dd_wnext
 .dd_wnotepad:
     call notepad_draw
+    jmp  .dd_wnext
+.dd_wpaint:
+    call paint_draw
     jmp  .dd_wnext
 .dd_wnext:
     inc  dword [wm_i]
@@ -738,7 +749,12 @@ wm_open:
     mov  dword [edi+20], wm_s_taskman
     jmp  .title_ok
 .t6:
+    cmp  eax, WM_NOTEPAD
+    jne  .t7
     mov  dword [edi+20], wm_s_notepad
+    jmp  .title_ok
+.t7:
+    mov  dword [edi+20], wm_s_paint
 .title_ok:
 
     ; count existing open windows to assign z_order
@@ -2810,6 +2826,7 @@ wm_s_help:       db 'About ', OS_NAME, 0
 wm_s_browser:    db 'Simple Browser', 0
 wm_s_taskman:    db 'Task Manager', 0
 wm_s_notepad:    db 'Notepad', 0
+wm_s_paint:      db 'Paint', 0
 
 ; Help window content
 wm_s_help_title: db OS_NAME, '  Build ', OS_BUILD, 0
