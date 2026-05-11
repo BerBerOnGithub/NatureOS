@@ -191,4 +191,6 @@ tm_type_list:
     db 3, 'About NatureOS', 0
     db 4, 'Simple Browser', 0
     db 5, 'Task Manager', 0
+    db 6, 'Notepad', 0
+    db 7, 'Paint', 0
     db 0xFF

@@ -1271,4 +1271,29 @@ pm_cmd_shutdown:
 pm_str_shutdown_msg:  db 'Shutting down via ACPI...', 0
 pm_str_shutdown_fail: db 'ACPI shutdown failed or not supported by hardware.', 0
 
+; ===========================================================================
+; pm_cmd_paint - Open GUI Paint
+; ===========================================================================
+pm_cmd_paint:
+    pusha
+    mov  al,  WM_PAINT
+    mov  ebx, 100
+    mov  ecx, 60
+    mov  edx, PAINT_W
+    mov  esi, PAINT_H
+    call wm_open
+    jc   .full
+    push ecx
+    call wm_draw_all
+    pop  ecx
+    call paint_init
+    jmp  .done
+.full:
+    mov  esi, pm_str_wm_full
+    call term_puts
+    call term_newline
+.done:
+    popa
+    ret
+
 
