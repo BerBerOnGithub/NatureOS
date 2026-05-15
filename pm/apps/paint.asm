@@ -3,24 +3,13 @@
 ;
 ; Opens a window with a canvas. Click and drag to draw pixels.
 ; Palette bar at bottom switches colors; first swatch is eraser (black).
-<<<<<<< Updated upstream
-=======
 ; F2 = Load canvas.bmp, F3 = Save canvas.bmp (8-bit indexed BMP)
->>>>>>> Stashed changes
 ; ===========================================================================
 [BITS 32]
 
 PAINT_W     equ 400
 PAINT_H     equ 300
 PAINT_CW    equ PAINT_W
-<<<<<<< Updated upstream
-PAINT_CH    equ 280
-PAINT_BUF   equ 0x660000
-PAINT_PAL_H equ 20
-PAINT_SW    equ 20
-PAINT_SH    equ 18
-PAINT_NUM   equ 8
-=======
 PAINT_CH    equ 236
 PAINT_BUF   equ 0x660000
 PAINT_PAL_H equ 30
@@ -37,7 +26,6 @@ PAINT_BMP_PAL   equ 1024
 PAINT_BMP_OFF   equ (PAINT_BMP_HDR + PAINT_BMP_PAL)   ; pixel data offset = 1078
 PAINT_BMP_PIX   equ (PAINT_CW * PAINT_CH)             ; pixel bytes (400*236=94400, already DWORD-aligned)
 PAINT_BMP_SIZE  equ (PAINT_BMP_OFF + PAINT_BMP_PIX)   ; total file size
->>>>>>> Stashed changes
 
 ; - paint_init
 paint_init:
@@ -64,8 +52,6 @@ paint_draw:
     add  ebx, WM_TITLE_H
     mov  [paint_tmp_y], ebx
 
-<<<<<<< Updated upstream
-=======
     ; --- toolbar ---
     mov  eax, [paint_tmp_x]
     mov  ebx, [paint_tmp_y]
@@ -83,7 +69,6 @@ paint_draw:
     mov  dh, 0x07
     call fb_draw_string
 
->>>>>>> Stashed changes
     ; blit canvas buffer to shadow framebuffer
     mov  dword [paint_tmp_row], 0
 .blit:
@@ -92,10 +77,7 @@ paint_draw:
     jge  .blit_done
     mov  edi, [gfx_fb_base]
     mov  ebx, [paint_tmp_y]
-<<<<<<< Updated upstream
-=======
     add  ebx, PAINT_TB_H
->>>>>>> Stashed changes
     add  ebx, eax
     imul ebx, 640
     add  edi, ebx
@@ -116,16 +98,10 @@ paint_draw:
     mov  eax, [paint_tmp_x]
     mov  ebx, [paint_tmp_y]
     add  ebx, PAINT_CH
-<<<<<<< Updated upstream
-    mov  ecx, PAINT_W
-    mov  edx, PAINT_PAL_H
-    mov  esi, 0x08
-=======
     add  ebx, PAINT_TB_H
     mov  ecx, PAINT_W
     mov  edx, PAINT_PAL_H
     mov  esi, 0x07
->>>>>>> Stashed changes
     call fb_fill_rect
 
     ; draw color swatches
@@ -141,10 +117,7 @@ paint_draw:
     mov  [paint_tmp_sx], ebx
     mov  ebx, [paint_tmp_y]
     add  ebx, PAINT_CH
-<<<<<<< Updated upstream
-=======
     add  ebx, PAINT_TB_H
->>>>>>> Stashed changes
     add  ebx, 1
     mov  [paint_tmp_sy], ebx
     mov  ebx, paint_colors
@@ -178,10 +151,7 @@ paint_draw:
     add  ebx, 8
     mov  ecx, [paint_tmp_y]
     add  ecx, PAINT_CH
-<<<<<<< Updated upstream
-=======
     add  ecx, PAINT_TB_H
->>>>>>> Stashed changes
     add  ecx, 6
     mov  dl, 0x0F
     mov  dh, 0x00
@@ -211,8 +181,6 @@ paint_tick:
     jmp  .find
 .handle:
     mov  [paint_tmp_id], ecx
-<<<<<<< Updated upstream
-=======
 
     ; --- keyboard: F2=load, F3=save ---
 .keyloop:
@@ -363,7 +331,6 @@ paint_tick:
     imul edi, ecx, WM_STRIDE
     add  edi, wm_table
 
->>>>>>> Stashed changes
     test byte [mouse_btn], 0x01
     jz   .done
     mov  eax, [mouse_x]
@@ -371,10 +338,7 @@ paint_tick:
     sub  eax, [edi+0]
     sub  ebx, [edi+4]
     sub  ebx, WM_TITLE_H
-<<<<<<< Updated upstream
-=======
     sub  ebx, PAINT_TB_H
->>>>>>> Stashed changes
     cmp  ebx, PAINT_CH
     jge  .palette
     cmp  ebx, 0
@@ -383,15 +347,6 @@ paint_tick:
     jl   .done
     cmp  eax, PAINT_CW
     jge  .done
-<<<<<<< Updated upstream
-    ; draw pixel into canvas buffer
-    imul ebx, PAINT_CW
-    add  ebx, eax
-    add  ebx, PAINT_BUF
-    movzx eax, byte [paint_color]
-    mov  al, [paint_colors + eax]
-    mov  [ebx], al
-=======
     ; draw line from last position to current position (Bresenham)
     mov  [paint_cur_x], eax
     mov  [paint_cur_y], ebx
@@ -505,16 +460,11 @@ paint_tick:
     mov  [paint_prev_x], eax
     mov  eax, [paint_cur_y]
     mov  [paint_prev_y], eax
->>>>>>> Stashed changes
     mov  ecx, [paint_tmp_id]
     call wm_invalidate
     jmp  .done
 .palette:
-<<<<<<< Updated upstream
-    cmp  ebx, PAINT_CH + PAINT_PAL_H
-=======
     cmp  ebx, PAINT_CH + PAINT_PAL_H + PAINT_TB_H
->>>>>>> Stashed changes
     jge  .done
     sub  eax, 4
     js   .done
@@ -527,21 +477,15 @@ paint_tick:
     mov  ecx, [paint_tmp_id]
     call wm_invalidate
 .done:
-<<<<<<< Updated upstream
-=======
     ; clear prev point when mouse released
     test byte [mouse_btn], 0x01
     jnz  .keep_prev
     mov  byte [paint_has_prev], 0
 .keep_prev:
->>>>>>> Stashed changes
     popa
     ret
 
 ; Data
-<<<<<<< Updated upstream
-paint_colors:   db 0x00, 0x0C, 0x0A, 0x01, 0x0E, 0x0B, 0x0D, 0x0F
-=======
 paint_str_help:  db '[F2] Load  [F3] Save  File: canvas.bmp', 0
 paint_filename:  db 'canvas.bmp', 0
 paint_colors:   db 0x00, 0x0C, 0x0A, 0x01, 0x0E, 0x0B, 0x0D, 0x0F
@@ -566,7 +510,6 @@ paint_cga_palette:
     db 0xFF, 0x55, 0xFF   ; 13 light magenta
     db 0x55, 0xFF, 0xFF   ; 14 yellow
     db 0xFF, 0xFF, 0xFF   ; 15 white
->>>>>>> Stashed changes
 paint_tmp_id:   dd 0
 paint_tmp_x:    dd 0
 paint_tmp_y:    dd 0
@@ -575,8 +518,6 @@ paint_tmp_i:    dd 0
 paint_tmp_sx:   dd 0
 paint_tmp_sy:   dd 0
 paint_color:    db 7
-<<<<<<< Updated upstream
-=======
 ; Bresenham line drawing state
 paint_has_prev: db 0
 paint_prev_x:   dd 0
@@ -595,4 +536,3 @@ paint_berr:     dd 0
 paint_be2:      dd 0
 paint_bpx:      dd 0
 paint_bpy:      dd 0
->>>>>>> Stashed changes
