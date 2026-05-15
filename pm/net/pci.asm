@@ -177,7 +177,7 @@ pci_init:
     mov  esi, [pci_scan_count]
     dec  esi
     cmp  esi, PCI_SCAN_MAX
-    jge  .check_e1000
+    jge  .check_usb
 
     ; entry: bus(1) dev(1) func(1) pad(1) venddev(4) = 8 bytes
     imul esi, 8
@@ -187,6 +187,10 @@ pci_init:
     mov  byte [esi + 2], 0   ; func
     mov  byte [esi + 3], 0   ; pad
     mov  [esi + 4], eax      ; vendor+device
+
+.check_usb:
+    ; Scan for USB controllers (any vendor, class-based)
+    call uhci_pci_scan
 
 .check_e1000:
     ; check vendor = Intel (0x8086)

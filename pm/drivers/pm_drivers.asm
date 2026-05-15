@@ -26,8 +26,9 @@ pm_drv_status:
     db 0    ; 4 PCI bus
     db 0    ; 5 e1000 NIC
     db 0    ; 6 ACPI
+    db 0    ; 7 USB Bus (UHCI)
 
-PM_DRV_COUNT equ 7
+PM_DRV_COUNT equ 8
 
 ; -
 ; pm_drv_init - initialise all PM drivers on entry to protected mode
@@ -106,6 +107,11 @@ pm_drv_init:
     setnc al                ; set AL=1 if CF=0 (success)
     mov  [pm_drv_status + 6], al
 
+    ; - Driver 7: USB Bus (UHCI) -
+    call uhci_init
+    mov  al, [uhci_found]
+    mov  [pm_drv_status + 7], al
+
     ; pre-seed ARP cache (QEMU SLIRP gateway doesn't respond to ARP)
     call arp_init
 
@@ -181,6 +187,10 @@ pm_drv_shutdown:
     ; - Driver 4: PCI " nothing to teardown -
     mov  byte [pm_drv_status + 4], 0
 
+    ; - Driver 7: USB Bus " stop UHCI -
+    call uhci_stop
+    mov  byte [pm_drv_status + 7], 0
+
     pop  edx
     pop  eax
     ret
@@ -253,6 +263,12 @@ pm_cmd_drivers:
     mov  al, [pm_drv_status + 6]
     call .status
 
+    mov  esi, pm_str_drv_usb
+    mov  bl, 0x0E
+    call pm_puts
+    mov  al, [pm_drv_status + 7]
+    call .status
+
     mov  esi, pm_str_drv_footer
     mov  bl, 0x0B
     call pm_puts
@@ -323,6 +339,7 @@ pm_str_drv_spk:     db ' | Speaker (PIT ch.2)   | ', 0
 pm_str_drv_pci:     db ' | PCI Bus  (0xCF8)     | ', 0
 pm_str_drv_e1000:   db ' | e1000 NIC (MMIO)     | ', 0
 pm_str_drv_acpi:    db ' | ACPI Power Mgmt      | ', 0
+pm_str_drv_usb:     db ' | USB Bus (UHCI)       | ', 0
 pm_str_drv_loaded:   db 'LOADED   |', 13, 10, 0
 pm_str_drv_unloaded: db 'UNLOADED |', 13, 10, 0
 
@@ -335,3 +352,4 @@ pm_str_drv_unloaded: db 'UNLOADED |', 13, 10, 0
 %include "pm/net/icmp.asm"
 %include "pm/net/udp.asm"
 %include "pm/net/tcp.asm"
+%include "pm/drivers/usb_uhci.asm"

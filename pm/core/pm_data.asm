@@ -125,6 +125,7 @@ pm_str_pfx_beep:     db 'beep', 0
 pm_str_pfx_wp:       db 'wp', 0
 pm_str_cmd_taskman:    db 'taskman', 0
 pm_str_cmd_paint:     db 'paint', 0
+pm_str_cmd_usb:      db 'usb', 0
 pm_str_cmd_shutdown: db 'shutdown', 0
 pm_str_beep_usage:   db 'Usage: beep <freq_hz> <duration_ticks>', 13, 10, 0
 si_str_cpu:          db 'CPU:', 0
@@ -158,6 +159,7 @@ pm_str_help_text:
     db ' | probe                | verify 32-bit PM           |', 13, 10
     db ' | drivers              | show loaded PM drivers     |', 13, 10
     db ' | pci                  | list all PCI devices       |', 13, 10
+    db ' | usb                  | UHCI controller status     |', 13, 10
     db ' | ifconfig             | NIC MAC + link status      |', 13, 10
     db ' | arp                  | show ARP cache             |', 13, 10
     db ' | arping <ip>          | send ARP request           |', 13, 10
