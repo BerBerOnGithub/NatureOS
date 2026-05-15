@@ -5,7 +5,7 @@
 ; Mirrors commands/ structure for the PM environment.
 ; Calls pm_screen, pm_string helpers. No BIOS.
 ; ===========================================================================
-SCR_CAPTURE equ 0x600000
+SCR_CAPTURE equ 0x1500000
 SCR_BUF     equ 0x300000
 SCR_W       equ 640
 SCR_H       equ 480
@@ -491,7 +491,7 @@ pm_cmd_savescr:
     dec  ecx
     mov  eax, 640
     imul eax, ecx
-    mov  esi, 0x600000    ; read from SCR_CAPTURE (snapshot taken by PrtSc)
+    mov  esi, 0x1500000   ; read from SCR_CAPTURE (snapshot taken by PrtSc)
     add  esi, eax
     push ecx
     mov  ecx, 160

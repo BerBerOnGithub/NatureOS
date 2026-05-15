@@ -168,18 +168,45 @@ acpi_init:
 ; Attempts to power off the system via ACPI.
 ; -
 acpi_shutdown:
+    ; --- Try ACPI PM1a_CNT if acpi_init succeeded ---
     mov  edx, [acpi_pm1a_cnt]
     test edx, edx
-    jz   .fail
-    
-    ; Write SLP_TYPa | SLP_EN to PM1a_CNT
-    ; Common QEMU S5 SLP_TYP is 0. 
-    ; SLP_EN is bit 13.
-    ; So 0x2000 is common. 
-    ; Future: parse DSDT/AML for _S5.
+    jz   .try_qemu_piix4
+
+    ; SLP_TYPa | SLP_EN -> PM1a_CNT
+    ; SLP_EN = bit 13 (0x2000); SLP_TYP in acpi_slp_typa already at correct bit position
     mov  ax, [acpi_slp_typa]
-    or   ax, 0x2000         ; ensure SLP_EN is set
+    or   ax, 0x2000
     out  dx, ax
-    
+
+    ; Short spin - if machine didn't die, fall through to QEMU port fallbacks
+    mov  ecx, 0xFFFFFF
+.acpi_spin:
+    pause
+    loop .acpi_spin
+
+.try_qemu_piix4:
+    ; QEMU PIIX4: PM I/O base 0x600, PM1a_CNT at +0x04 = port 0x604
+    mov  dx, 0x604
+    mov  ax, 0x2000
+    out  dx, ax
+
+    ; QEMU Q35/ICH9: port 0xB004
+    mov  dx, 0xB004
+    mov  ax, 0x2000
+    out  dx, ax
+
+    ; Bochs/old QEMU: port 0x8900 with "Shutdown" string
+    mov  dx, 0x8900
+    mov  esi, .qemu_shutdown_str
+.bochs_loop:
+    lodsb
+    test al, al
+    jz   .fail
+    out  dx, al
+    jmp  .bochs_loop
+
 .fail:
     ret
+
+.qemu_shutdown_str: db 'Shutdown', 0

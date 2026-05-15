@@ -120,7 +120,7 @@ exit /b 0
   -cdrom natureos.iso ^
   -drive format=raw,file=data.img,if=ide,index=3 ^
   -boot d ^
-  -m 256M ^
+  -m 128M ^
   -cpu qemu64 ^
   -smp 1 ^
   -vga std ^

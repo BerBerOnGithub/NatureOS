@@ -166,20 +166,37 @@ wallpaper_draw:
     ; this avoids 1-pixel black "gaps" if wallpaper height isn't exactly 480
 
 .blit:
-    ; blit row by row using explicit framebuffer row pointer
+    ; --- Step 1: clear full desktop area (above taskbar) in shadow buffer ---
+    ; This wipes any stale window/icon pixels left from the previous frame.
+    mov  edi, [gfx_fb_base]
+    mov  ecx, GFX_W * WM_TASKBAR_Y  ; all pixels above taskbar
+    mov  al,  0x01                   ; dark blue desktop background
+    rep  stosb
+
+    ; --- Step 2: compute pad_top once ---
+    mov  eax, 480
+    sub  eax, [wp_h]
+    shr  eax, 1                 ; pad_top = (480 - wp_h) / 2
+    mov  [wp_pad_top], eax
+
+    mov  eax, 640
+    sub  eax, [wp_w]
+    shr  eax, 1                 ; pad_left = (640 - wp_w) / 2
+    mov  [wp_pad_left], eax
+
+    ; --- Step 3: blit wallpaper rows into correct position ---
     xor  ebx, ebx               ; screen row counter (top to bottom)
 .blit_loop:
     cmp  ebx, [wp_h]
     jge  .blit_done
 
-    ; framebuffer row pointer: base + (row + pad_top) * pitch
+    ; framebuffer row pointer: base + (pad_top + row) * 640 + pad_left
     mov  edi, [gfx_fb_base]
-    mov  eax, 480
-    sub  eax, [wp_h]
-    shr  eax, 1                 ; eax = pad_top
-    add  eax, ebx               ; eax = screen row
-    imul eax, [gfx_fb_pitch]
+    mov  eax, [wp_pad_top]
+    add  eax, ebx
+    imul eax, GFX_W
     add  edi, eax
+    add  edi, [wp_pad_left]     ; offset to centred column start
 
     ; source pointer: WP_BUF + row * 640
     mov  esi, WP_BUF
@@ -189,14 +206,6 @@ wallpaper_draw:
 
     mov  ecx, [wp_w]
     rep  movsb
-
-    ; pad right side with first wallpaper colour (index 16) if image narrower than 640
-    ; NOTE: never pad with 0 (black) - that causes a black line on the right edge
-    mov  ecx, 640
-    sub  ecx, [wp_w]
-    jz   .next_row
-    mov  al, 16         ; first wallpaper DAC slot, not black (0)
-    rep  stosb
 
 .next_row:
     inc  ebx
@@ -234,5 +243,7 @@ wp_w:        dd 0
 wp_h:        dd 0
 wp_stride:   dd 0
 wp_pixoff:   dd 0
+wp_pad_top:  dd 0
+wp_pad_left: dd 0
 wp_filename: db 'wallpaper', 0
              times 22 db 0

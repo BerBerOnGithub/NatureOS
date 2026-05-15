@@ -2199,7 +2199,12 @@ wm_update_contents:
     mov  eax, [pit_ticks]
     cmp  eax, [sw_last_pit]
     je   .done                  ; no new tick yet
+
+    ; compute delta (handles wrap-around correctly for unsigned 32-bit)
+    mov  ecx, eax
+    sub  ecx, [sw_last_pit]     ; ECX = ticks elapsed since last call (may be >1 if main loop was slow)
     mov  [sw_last_pit], eax
+    mov  [sw_tick_delta], ecx
 
     ; - notification auto-clear -
     call wm_notify_tick
@@ -2288,8 +2293,9 @@ wm_update_contents:
     cmp  byte [sw_running], 1
     jne  .done
 
-    ; stopwatch always counts PIT ticks (cosmetic only, accuracy doesn't matter)
-    inc  dword [sw_cs_count]
+    ; stopwatch: accumulate exact PIT delta (fixes under-count when main loop is slow)
+    mov  ecx, [sw_tick_delta]
+    add  [sw_cs_count], ecx
 
     ; update sw_ticks: what wm_draw_clock will display
     cmp  byte [sw_mode], SW_MODE_TIMER
@@ -2366,27 +2372,48 @@ wm_restore_sysinfo_bg:
     jmp .done
 
 .wp:
-    mov  ebx, 0       ; current y
+    mov  ebx, 0       ; screen row counter (0..109, covers sysinfo region)
 .yloop:
     cmp  ebx, 110
     jge  .done
 
-    ; Fast blit from wallpaper source (WP_BUF) to shadow buffer (GFX_SHADOW)
-    ; dst = GFX_SHADOW + (y * 640) + 470
+    ; dst: shadow buffer row = y * 640 + 470
     mov  edi, GFX_SHADOW
     mov  eax, ebx
     imul eax, 640
     add  edi, eax
     add  edi, 470
 
-    ; src = WP_BUF + (y * 640) + 470
-    mov  esi, WP_BUF
-    add  esi, eax
-    add  esi, 470
+    ; src: WP_BUF pixel at this screen row and x=470
+    ; screen row -> WP_BUF row = screen_y - pad_top (if in range, else use desktop bg)
+    mov  eax, ebx
+    sub  eax, [wp_pad_top]
+    js   .fill_bg           ; above wallpaper: fill with desktop colour
+    cmp  eax, [wp_h]
+    jge  .fill_bg           ; below wallpaper: fill with desktop colour
 
+    ; WP_BUF row is valid: src = WP_BUF + row * 640 + pad_left
+    ; but sysinfo x=470, so we want: WP_BUF + row*640 + max(470 - pad_left, 0)
+    imul eax, 640
+    add  eax, WP_BUF
+    ; x in wallpaper = screen_x - pad_left; for x=470:
+    mov  ecx, 470
+    sub  ecx, [wp_pad_left]
+    js   .fill_bg
+    cmp  ecx, [wp_w]
+    jge  .fill_bg
+    add  eax, ecx
+    mov  esi, eax
     mov  ecx, 170
     rep  movsb
+    jmp  .next_si_row
 
+.fill_bg:
+    mov  ecx, 170
+    mov  al, 0x01           ; dark blue (desktop background colour)
+    rep  stosb
+
+.next_si_row:
     inc  ebx
     jmp  .yloop
 
@@ -2803,6 +2830,7 @@ sw_cs:           dd 0            ; scratch for wm_draw_clock
 sw_cs_count:     dd 0            ; total centiseconds elapsed since start
 sw_start_offset: dd 0            ; centiseconds saved before pause
 sw_last_pit:     dd 0            ; pit_ticks snapshot from last update
+sw_tick_delta:   dd 0            ; ticks elapsed since last wm_update_contents call
 sw_rtc_secs:     dd 0            ; RTC seconds elapsed since timer start
 
 wm_fbuf:         times 20 db 0

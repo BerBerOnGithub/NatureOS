@@ -2,22 +2,9 @@
 
 
 
-System:
-
-* Migrated data disk from proprietary CLFD to FAT16
-* Added basic ACPI support
-
-
-
-GUI:
-
-* Added Context Menu
-
-
-
 Apps:
 
-* Added Notepad
+* Added Paint
 
 
 
