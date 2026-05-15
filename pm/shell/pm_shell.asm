@@ -392,6 +392,11 @@ pm_exec:
     call pm_strcmp
     je   .paint
 
+    mov  esi, pm_input_buf
+    mov  edi, pm_str_cmd_usb
+    call pm_strcmp
+    je   .usb
+
     ; unknown
     mov  esi, pm_str_unknown
     mov  bl, 0x0C
@@ -461,6 +466,8 @@ pm_exec:
 .shutdown:  call pm_cmd_shutdown
     jmp  .done
 .paint:     call pm_cmd_paint
+    jmp  .done
+.usb:       call uhci_port_status
     jmp  .done
 .exit:  call pm_cmd_exit       ; does not return to here
 

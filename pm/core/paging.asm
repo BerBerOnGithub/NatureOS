@@ -25,6 +25,7 @@ PAGE_TBL_0    equ 0x1001000      ; Start of 64 contiguous tables
                                 ; Tables 0-63 map 0x00000000 to 0x0FFFFFFF (256MB)
 PAGE_TBL_VBE   equ 0x1041000
 PAGE_TBL_E1000 equ 0x1042000
+PAGE_TBL_USB   equ 0x1043000    ; USB controller MMIO (EHCI/OHCI/xHCI)
 
 paging_init:
     pusha
